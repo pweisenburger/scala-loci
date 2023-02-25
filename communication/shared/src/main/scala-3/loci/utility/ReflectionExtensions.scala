@@ -46,6 +46,43 @@ object reflectionExtensions:
   end extension
 
   extension (using Quotes)(tree: quotes.reflect.Tree)
+    def posInUserCode =
+      import quotes.reflect.*
+
+      val splicePos = Position.ofMacroExpansion
+
+      inline def isSynthetic(pos: Position) =
+        pos.toString endsWith ">"
+
+      inline def inUserCode(pos: Position) =
+        pos.sourceFile == splicePos.sourceFile &&
+        pos.start >= splicePos.start &&
+        pos.end <= splicePos.end &&
+        (pos.start != splicePos.start || (pos.end != splicePos.start && pos.end != splicePos.end))
+
+      class PositionsAccumulator(filter: Position => Boolean) extends TreeAccumulator[List[Position]]:
+        def foldTree(positions: List[Position], tree: Tree)(owner: Symbol) =
+          if filter(tree.pos) then
+            foldOverTree(tree.pos :: positions, tree)(owner)
+          else
+            foldOverTree(positions, tree)(owner)
+
+      def accumulatePositions(filter: Position => Boolean) =
+        val positions = PositionsAccumulator(filter).foldTree(List.empty, tree)(Symbol.noSymbol)
+        Option.when(positions.nonEmpty) {
+          positions reduce { (pos0, pos1) =>
+            Position(splicePos.sourceFile, math.min(pos0.start, pos1.start), math.max(pos0.end, pos1.end))
+          }
+        }
+
+      if inUserCode(tree.pos) && !isSynthetic(tree.pos) then
+        tree.pos
+      else
+        accumulatePositions { pos => inUserCode(pos) && !isSynthetic(pos) } orElse
+        accumulatePositions { inUserCode(_) } getOrElse
+        Position.ofMacroExpansion
+    end posInUserCode
+
     @targetName("safeShowTree") def safeShow: String = tree.safeShow("<?>", quotes.reflect.Printer.TreeCode)
     @targetName("safeShowTree") def safeShow(fallback: String): String = tree.safeShow(fallback, quotes.reflect.Printer.TreeCode)
     @targetName("safeShowTree") def safeShow(fallback: String, printer: quotes.reflect.Printer[quotes.reflect.Tree]): String =
