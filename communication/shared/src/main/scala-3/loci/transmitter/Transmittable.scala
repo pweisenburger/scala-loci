@@ -55,11 +55,12 @@ object Transmittable
       implicit context: Context.Receiving[Transmittables]): Result
     def buildProxy(value: Notice.Steady[Try[Intermediate]])(
       implicit context: Context.Receiving[Transmittables]): Proxy
+  end Any
 
 
-  transparent inline def apply[T](using resolution: Resolution[T, ?, ?, ?, ?]) = resolution.transmittable
+  transparent inline def apply[T](using inline resolution: Resolution[T, ?, ?, ?, ?]) = resolution.transmittable
 
-  transparent inline def Argument[T](using resolution: Resolution[T, ?, T, ?, ?]) = resolution.transmittable
+  transparent inline def Argument[T](using inline resolution: Resolution[T, ?, T, ?, ?]) = resolution.transmittable
 
 
   given nothing: IdenticallyTransmittable[Nothing] = IdenticallyTransmittable()
@@ -67,11 +68,10 @@ object Transmittable
 
   sealed trait SurrogateNothing
 
-  object SurrogateNothing {
+  object SurrogateNothing:
     @compileTimeOnly("loci.transmitter.transmittable.TransmittableBase.SurrogateNothing is not transmittable")
     implicit def surrogateType[T]: IdenticallyTransmittable[SurrogateNothing] =
       IdenticallyTransmittable()
-  }
 
 
   @implicitNotFound("${B} is not transmittable")
