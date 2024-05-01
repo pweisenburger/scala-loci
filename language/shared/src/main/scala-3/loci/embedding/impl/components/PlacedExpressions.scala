@@ -177,6 +177,12 @@ trait PlacedExpressions:
     def adaptedDefinitionType(stat: ValDef | DefDef) =
       TypePlacementTypesEraser(stat.posInUserCode, checkOnly).transform(stat.symbol.info)
 
+    override def transformStatement(stat: Statement)(owner: Symbol) = stat match
+      case ClassDef(_, _, _, _, _) if isMultitierModule(stat.symbol) =>
+        stat
+      case _ =>
+        super.transformStatement(stat)(owner)
+
     override def transformTerm(term: Term)(owner: Symbol) = term match
       // erase placement lifting conversions
       case PlacementLiftingConversion(expr) if !checkOnly =>

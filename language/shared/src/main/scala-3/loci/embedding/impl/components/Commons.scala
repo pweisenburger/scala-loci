@@ -209,10 +209,6 @@ trait Commons:
     SymbolMutator.getOrErrorAndAbort.setFlag(symbol.moduleClass, clsFlags.cleaned)
     symbol
 
-  given ValOrDefDef: TypeTest[Tree, ValDef | DefDef] = tree =>
-    summon[TypeTest[Tree, ValDef]].unapply(tree) orElse
-    summon[TypeTest[Tree, DefDef]].unapply(tree)
-
   def contextMethodType[T: Type, R: Type] =
     val Inlined(_, _, Block(List(lambda), _)) = '{ (_: T) ?=> ?[R] }.asTerm: @unchecked
     val tpe @ MethodType(_, _, _) = lambda.symbol.info: @unchecked

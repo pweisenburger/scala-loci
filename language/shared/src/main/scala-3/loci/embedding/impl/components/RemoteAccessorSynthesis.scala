@@ -286,10 +286,16 @@ trait RemoteAccessorSynthesis:
         case _ =>
           foldOverTree(failure, tree)(owner)
 
+    private val cache = MutableCachedTypeSeqMap[Result]
+
     def resolve(tpe: TypeRepr, message: String) =
-      noMacroCheck(Implicits.search(tpe)) match
-        case result: ImplicitSearchSuccess => Result(result.tree)
-        case _ => Result.Failure(message)
+      cache.lookupType(tpe) getOrElse:
+        val result =
+          noMacroCheck(Implicits.search(tpe)) match
+            case result: ImplicitSearchSuccess => Result(result.tree)
+            case _ => Result.Failure(message)
+        cache.addNewTypeEntry(tpe, result)
+        result
 
     def resolveSerializable(tpe: TypeRepr) =
       resolve(
@@ -463,9 +469,6 @@ trait RemoteAccessorSynthesis:
       val message = "Failed to generate accessor for"
 
       def signature(symbol: Symbol) =
-        val result =
-          val tpe = symbol.info.resultType
-          PlacementInfo(tpe).fold(tpe.safeShow(Printer.SafeTypeReprShortCode)) { _.showCanonical }
         val args =
           symbol.paramSymss map: params =>
             val args = params map: param =>
@@ -476,6 +479,9 @@ trait RemoteAccessorSynthesis:
                 case TypeBounds(low, hi) => s"${param.name} >: ${low.safeShow(Printer.SafeTypeReprShortCode)} <: ${hi.safeShow(Printer.SafeTypeReprShortCode)}"
                 case tpe => s"${param.name}: ${tpe.safeShow(Printer.SafeTypeReprShortCode)}"
             if params.isEmpty || params.head.isTerm then s"(${args.mkString(", ")})" else s"[${args.mkString(", ")}]"
+        val result =
+          val tpe = symbol.info.resultType
+          PlacementInfo(tpe).fold(tpe.safeShow(Printer.SafeTypeReprShortCode)) { _.showCanonical }
         s"${args.mkString}: $result"
 
       val name = symbolForName match
@@ -716,6 +722,7 @@ trait RemoteAccessorSynthesis:
             case result => result
 
       val definedOrOverriddenMarshallables = mutable.Set.empty[String]
+
       module.typeRef.baseClasses.tail foreach: parent =>
         if isMultitierModule(parent) then
           val accessors = synthesizeAccessors(parent)
@@ -726,6 +733,7 @@ trait RemoteAccessorSynthesis:
               inheritedMarshallables.lookupType(marshallable.types.base) match
                 case Some(marshallables) => marshallables += marshallable
                 case _ => inheritedMarshallables.addNewTypeEntry(marshallable.types.base, mutable.SortedSet(marshallable))
+    end if
 
     val serializableTypeMap = MutableCachedTypeSeqMap[Term]
 
@@ -812,7 +820,7 @@ trait RemoteAccessorSynthesis:
     var marshallableIndex = 0
 
     enum RequiredMarshallable(val maybeResult: Option[TypeRepr], val maybeProxy: Option[TypeRepr]):
-      def base: TypeRepr
+      val base: TypeRepr
       case Base(base: TypeRepr) extends RequiredMarshallable(None, None)
       case Result(base: TypeRepr, result: TypeRepr) extends RequiredMarshallable(Some(result), None)
       case Proxy(base: TypeRepr, result: TypeRepr, proxy: TypeRepr) extends RequiredMarshallable(Some(result), Some(proxy))

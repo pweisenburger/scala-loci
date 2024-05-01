@@ -13,16 +13,16 @@ abstract class PlacedValue[-P, +T] private[loci]:
 //  def applyDynamic(key: String)(args: Any*): Unit = macro AccessorResolutionFailure.applyDynamic
 //  def applyDynamicNamed(key: String)(args: Any*): Unit = macro AccessorResolutionFailure.applyDynamic
 
-object PlacedValue: // extends transmitter.RemoteAccessor.Default:
+object PlacedValue extends transmitter.RemoteAccessor.Default:
   type Resolution[P, T] = PlacedValue[P, T] { type on = P }
 
 sealed trait Placed[-P, +T] extends PlacedValue[P, T]:
   def test: Int = 0
-//  def to[R, U](r: RemoteSbj[R, T, U]): U
-//  def from[R]: T @uncheckedVariance from R
-//  def from[R](r: Remote[R]): T @uncheckedVariance fromSingle R
-//  def from[R](r: Seq[Remote[R]]): T @uncheckedVariance fromMultiple R
-//  def from[R, placed[_, _]](r: RemoteSelection[R, placed]): T @uncheckedVariance placed R
+  infix def to[R, U](r: Remote[R])(using Subjectivity[T, U]): U
+  def from[R]: T @uncheckedVariance from R
+  infix def from[R](r: Remote[R]): T @uncheckedVariance fromSingle R
+  infix def from[R](r: Seq[Remote[R]]): T @uncheckedVariance fromMultiple R
+  infix def from[R](r0: Remote[R], r1: Remote[R], rn: Remote[R]*): T @uncheckedVariance fromMultiple R
 
 object Placed:
 //  extension [P, T](inline placed: Placed[P, T])
@@ -52,8 +52,8 @@ object Placed:
 //object RemoteSbj {
 //  implicit def remote[R, T, U](r: Remote[R])(implicit ev: Subjectivity[T, U]): RemoteSbj[R, T, U] = erased(ev)
 //}
-//
-//
+
+
 //sealed trait CommonSuperType[-T, -U, R]
 //
 //sealed trait CommonSuperTypeFallback {
