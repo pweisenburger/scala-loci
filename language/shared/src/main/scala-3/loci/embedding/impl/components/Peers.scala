@@ -26,6 +26,9 @@ trait Peers:
     def apply(tpe: TypeRepr, pos: Position): Option[PeerInfo] =
       check(tpe, pos).toOption
 
+    def check(tpe: TypeRepr): Either[(String, Position), PeerInfo] =
+      check(tpe, Position.ofMacroExpansion)
+
     def check(tpe: TypeRepr, pos: Position): Either[(String, Position), PeerInfo] = tpe match
       case tpe: TypeRef if tpe.typeSymbol == defn.AnyClass =>
         Right(PeerInfo(tpe, List.empty, List.empty, pos))
@@ -38,7 +41,7 @@ trait Peers:
               if bottomType(low) then
                 parentsAndTies(hi, pos) map { (parents, ties) => PeerInfo(tpe, parents, ties, pos) }
               else
-                Left(s"Lower type bound not allowed in peer specification: >: ${TypeBounds.lower(low).safeShow(Printer.SafeTypeReprShortCode)}", position)
+                Left(s"Lower type bound not allowed in peer specification: >: ${low.safeShow(Printer.SafeTypeReprShortCode)}", position)
             case tpe =>
               Left(s"Unexpected type in peer specification: ${tpe.safeShow(Printer.SafeTypeReprShortCode)}", position)
         else
@@ -52,13 +55,18 @@ trait Peers:
 
     @targetName("ofModuleType")
     def ofModule(tpe: TypeRepr): List[PeerInfo] =
-      val symbol = tpe.typeSymbol orElse (tpe.baseClasses.headOption getOrElse Symbol.noSymbol)
-      val peers =
-        symbol.typeMembers flatMap: symbol =>
-          if !(symbol.flags is Flags.Synthetic) then
-           PeerInfo(tpe.select(symbol), symbol.pos getOrElse Position.ofMacroExpansion)
-          else
-            None
+      val (peers, _) =
+        tpe.baseClasses.foldLeft(List.empty[PeerInfo], Set.empty[Symbol]):
+          case ((peers, overridden), symbol) =>
+            val declaredPeers = symbol.declarations flatMap: symbol =>
+              if symbol.isType && !(symbol.flags is Flags.Synthetic) && !(overridden contains symbol) then
+                PeerInfo(tpe.select(symbol), symbol.pos getOrElse Position.ofMacroExpansion)
+              else
+                None
+            val overriddenPeers = declaredPeers.iterator flatMap: peerInfo =>
+              val symbol = peerInfo.peerType.typeSymbol
+              Iterator(symbol) ++ symbol.allOverriddenSymbols
+            (peers ++ declaredPeers, overridden ++ overriddenPeers)
       PeerInfo(defn.AnyClass.typeRef, List.empty, List.empty, Position.ofMacroExpansion) :: peers
 
     private def parentsAndTies(tpe: TypeRepr, pos: Position): Either[(String, Position), (List[TypeRepr], List[(TypeRepr, Multiplicity)])] = tpe match
@@ -77,9 +85,11 @@ trait Peers:
               parentsAndTies(parent, pos) map: (parentParents, parentTies) =>
                 (parentParents, parentTies ++ ties)
           else
-            Left(s"Lower type bound not allowed for peer specification: >: ${TypeBounds.lower(low).safeShow(Printer.SafeTypeReprShortCode)}", pos)
+            Left(s"Lower type bound not allowed for peer tie specification: >: ${low.safeShow(Printer.SafeTypeReprShortCode)}", pos)
         case _ =>
-          Left(s"Unexpected type in peer specification: ${info.safeShow(Printer.SafeTypeReprShortCode)}", pos)
+          Left(s"Unexpected type in peer tie specification: ${info.safeShow(Printer.SafeTypeReprShortCode)}", pos)
+      case _ =>
+        Left(s"Unexpected type in peer specification: ${tpe.safeShow(Printer.SafeTypeReprShortCode)}", pos)
 
     private def ties(tpe: TypeRepr, pos: Position): Either[(String, Position), List[(TypeRepr, Multiplicity)]] = tpe match
       case tpe: TypeRef if topType(tpe) =>
@@ -96,7 +106,7 @@ trait Peers:
           else if symbol == symbols.multiple then Right(Multiplicity.Multiple)
           else Left(
             s"Unexpected multiplicity in peer tie specification: ${symbol.name} " +
-            s"(expected one of: ${symbols.single.name}, ${symbols.optional.name}, ${symbols.multiple.name}",
+            s"(expected one of: ${symbols.single.name}, ${symbols.optional.name}, ${symbols.multiple.name})",
             pos)
         multiplicity map { multiplicity => List(arg.stripLazyRef -> multiplicity) }
       case _ =>

@@ -27,7 +27,6 @@ object Multitier:
       PlacedExpressions,
       PlacedValueSynthesis,
       RemoteAccessorSynthesis,
-      SynthesisInjection,
       PlacedValueSplitting,
       RemoteAccessorGeneration,
       Invocation
@@ -40,7 +39,6 @@ object Multitier:
       eraseMultitierConstructs)
 
     val processingPhases = List(
-      enterSynthesizedSymbols,
       split,
       rewireInvocations,
       addAccessors)

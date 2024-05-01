@@ -16,7 +16,7 @@ object PlacedValueSynthesis:
 
 @experimental
 trait PlacedValueSynthesis:
-  this: Component & Commons & Annotations & Placements =>
+  this: Component & Commons & Annotations & Placements & Peers =>
   import quotes.reflect.*
 
   case class SynthesizedPlacedValues(symbol: Symbol, parents: List[TypeRepr])
@@ -43,6 +43,7 @@ trait PlacedValueSynthesis:
       val flags = Flags.Synthetic | Flags.Trait | (if noInits then Flags.NoInits else Flags.EmptyFlags)
       val symbol = newClass(owner, if canMakeTargetName then name else mangledName, flags, parents, decls, selfType = None)
       tryMakeTargetName(symbol, mangledName)
+      SymbolMutator.getOrErrorAndAbort.enter(owner, symbol)
       symbol
 
   private def copyAnnotations(from: Symbol, to: Symbol, decrementContextResultCount: Boolean) =
@@ -189,7 +190,7 @@ trait PlacedValueSynthesis:
       val form = implementationForm(module)
       val separator = if module.isType && !module.isPackageDef && !module.isModuleDef then "#" else "."
 
-      def parentPlacedValues =
+      def inheritedParentPlacedValues =
         module.typeRef.baseClasses.tail collect:
           case parent if isMultitierModule(parent) =>
             val symbol =
@@ -197,11 +198,17 @@ trait PlacedValueSynthesis:
               else parent.typeMember(peer.name) orElse defn.AnyClass
             ThisType(module).select(synthesizedPlacedValues(parent, symbol).symbol)
 
+      def declaredParentPlacedValues =
+        PeerInfo(ThisType(module).select(peer)).toList flatMap:
+          _.parents collect:
+            case parent @ TypeRef(qualifier, _) if PeerInfo(parent).isDefined =>
+              qualifier.select(synthesizedPlacedValues(qualifier.typeSymbol, parent.typeSymbol).symbol)
+
       val parents =
         TypeRepr.of[Object] :: (
           if !isMultitierModule(module) then List.empty
-          else if peer == defn.AnyClass then parentPlacedValues :+ types.placedValues
-          else synthesizedPlacedValues(module, defn.AnyClass).symbol.typeRef :: parentPlacedValues)
+          else if peer == defn.AnyClass then declaredParentPlacedValues ++ inheritedParentPlacedValues :+ types.placedValues
+          else synthesizedPlacedValues(module, defn.AnyClass).symbol.typeRef :: declaredParentPlacedValues ++ inheritedParentPlacedValues)
 
       synthesizedPlacedValuesCache.getOrElse((module, peer), {
         val symbol = syntheticTrait(
