@@ -476,8 +476,7 @@ object implicitHints {
             val baseType = finalResultType(c)(symbol.paramLists.head.head, path)
             val resultType = finalResultType(c)(symbol, path)
 
-            if (isMeaningfulType(c)(baseType, baseType.typeSymbol) &&
-                isMeaningfulType(c)(resultType, resultType.typeSymbol))
+            if (isMeaningfulType(c)(baseType, baseType.typeSymbol))
               typeInstantiations(c)(baseType, tpe, Variance.Contravariant) map { instantiations =>
                 val (from, to) = instantiations.toList.unzip
                 (symbol, resultType.substituteTypes(from, to), path)

@@ -26,6 +26,7 @@ object implicitHints:
           return xi - yi
 
         i += 1
+      end while
 
       x.length - y.length
   end given
@@ -37,9 +38,9 @@ object implicitHints:
       val abstractFileClass = Class.forName("dotty.tools.io.AbstractFile")
 
       Some(
-        (symbolClass.getMethod("associatedFile", contextClass),
-         abstractFileClass.getMethod("path"),
-         abstractFileClass.getMethod("underlyingSource")))
+        symbolClass.getMethod("associatedFile", contextClass),
+        abstractFileClass.getMethod("path"),
+        abstractFileClass.getMethod("underlyingSource"))
     catch
       case NonFatal(_) =>
         None
@@ -62,8 +63,7 @@ object implicitHints:
 
           underlyingSourceMethod.invoke(file) match
             case Some(underlyingSource)
-                if underlyingSource != file &&
-                   mightBeScalaSource(underlyingSource) =>
+                if underlyingSource != file && mightBeScalaSource(underlyingSource) =>
               return true
             case _ =>
 
@@ -112,10 +112,10 @@ object implicitHints:
       val nameClass = Class.forName("dotty.tools.dotc.core.Names$Name")
 
       Some(
-        (parsersClass.getMethod("parser", sourceFileClass, contextClass),
-         parserClass.getMethod("compilationUnit"),
-         importClass,
-         nameClass))
+        parsersClass.getMethod("parser", sourceFileClass, contextClass),
+        parserClass.getMethod("compilationUnit"),
+        importClass,
+        nameClass)
     catch
       case NonFatal(_) =>
         None
@@ -162,23 +162,19 @@ object implicitHints:
         val typeClass = Class.forName("dotty.tools.dotc.core.Types$Type")
 
         def typeSymbols(tpe: Any): Set[Symbol] =
-          val symbols =
-            tpe match
-              case tpes: List[?] => tpes.toSet flatMap typeSymbols
-              case tpe: Product => tpe.productIterator.toSet flatMap typeSymbols
-              case _ => Set.empty
-
+          val symbols = tpe match
+            case tpes: List[?] => tpes.toSet flatMap typeSymbols
+            case tpe: Product => tpe.productIterator.toSet flatMap typeSymbols
+            case _ => Set.empty
           tpe match
-            case tpe: TypeRepr @unchecked if typeClass.isInstance(tpe) =>
-              symbols + tpe.typeSymbol
-            case _ =>
-              symbols
+            case tpe: TypeRepr @unchecked if typeClass.isInstance(tpe) => symbols + tpe.typeSymbol
+            case _ => symbols
 
         typeSymbols(tpe)
-
       catch
         case NonFatal(_) =>
           Set(tpe.typeSymbol)
+    end symbols
 
     symbols flatMap { symbol =>
       (ancestors(symbol)
@@ -193,14 +189,20 @@ object implicitHints:
   end typeSymbolNames
 
   private def fieldMembers(using Quotes)(symbol: quotes.reflect.Symbol) =
-    try symbol.fieldMembers catch { case NonFatal(_) => List.empty }
+    import quotes.reflect.*
+    if !hasAncestor(symbol, Symbol.spliceOwner) then
+      try symbol.fieldMembers catch { case NonFatal(_) => List.empty }
+    else
+      List.empty
 
   private def methodMembers(using Quotes)(symbol: quotes.reflect.Symbol) =
-    try symbol.methodMembers catch { case NonFatal(_) => List.empty }
+    import quotes.reflect.*
+    if !hasAncestor(symbol, Symbol.spliceOwner) then
+      try symbol.methodMembers catch { case NonFatal(_) => List.empty }
+    else
+      List.empty
 
-  private def findImplicits(using Quotes)(
-      tpe: Option[quotes.reflect.TypeRepr],
-      findConversions: Boolean) =
+  private def findImplicits(using Quotes)(tpe: Option[quotes.reflect.TypeRepr], findConversions: Boolean) =
     import quotes.reflect.*
 
     val (maxDepth, maxVisited, resetDepth) =
@@ -245,24 +247,16 @@ object implicitHints:
                 case _ => false
               }) ||
               (name == "sun" &&
-               member.owner.name == "com" &&
-               member.owner.owner == defn.RootClass)
+               member.maybeOwner.name == "com" &&
+               member.maybeOwner.maybeOwner == defn.RootClass)
 
-            if !knownPackage &&
-               member.isTerm &&
-               member.isPublic &&
-               !(member.name contains '$') then
-
+            if !knownPackage && member.isTerm && member.isPublic && !(member.name contains '$') then
               val selection = ref.select(member)
 
-              if member.isModuleDef &&
-                 depth < maxDepth &&
-                 visited.size < maxVisited then
+              if member.isModuleDef && depth < maxDepth && visited.size < maxVisited then
                 queue.enqueue(selection -> (if resetDepth(member.name) then 0 else depth + 1))
 
-              if symbol != defn.ScalaPackage &&
-                 symbol != defn.PredefModule then
-
+              if symbol != defn.ScalaPackage && symbol != defn.PredefModule then
                 if member.isExtensionMethod && findConversions then
                   implicitConversions += selection
 
@@ -285,11 +279,11 @@ object implicitHints:
 
   private def isMeaningfulType(using Quotes)(tpe: quotes.reflect.TypeRepr) =
     import quotes.reflect.*
-
     tpe match
-      case _: ParamRef => false
+      case _: ParamRef =>
+        false
       case _ =>
-        val symbol = tpe.typeSymbol
+        val symbol = tpe.dealias.typeSymbol
         symbol != defn.AnyClass &&
         symbol != defn.AnyValClass &&
         symbol != defn.AnyRefClass &&
@@ -299,7 +293,6 @@ object implicitHints:
 
   private def isMeaningfulMethod(using Quotes)(symbol: quotes.reflect.Symbol) =
     import quotes.reflect.*
-
     symbol.isTerm &&
     symbol.isPublic &&
     !symbol.isClassConstructor &&
@@ -313,23 +306,22 @@ object implicitHints:
         defn.AnyValClass,
         defn.AnyRefClass,
         defn.ProductClass,
-        defn.ObjectClass) contains symbol.owner)
+        defn.ObjectClass) contains symbol.maybeOwner)
     })
 
   private def ancestors(using Quotes)(symbol: quotes.reflect.Symbol): List[quotes.reflect.Symbol] =
-    if symbol.exists then
-      symbol :: ancestors(symbol.owner)
-    else
-      List.empty
+    if symbol.exists then symbol :: ancestors(symbol.maybeOwner) else List.empty
+
+  private def hasAncestor(using Quotes)(symbol: quotes.reflect.Symbol, ancestor: quotes.reflect.Symbol): Boolean =
+    symbol.exists && (symbol == ancestor || hasAncestor(symbol.maybeOwner, ancestor))
 
   private def associatedImplicitScope(using Quotes)(
       tpe: quotes.reflect.TypeRepr): Set[quotes.reflect.Symbol] =
     import quotes.reflect.*
 
-    def owner(tpe: TypeRepr): Symbol = tpe match {
+    def owner(tpe: TypeRepr): Symbol = tpe match
       case TypeRef(qualifier, _) => qualifier.typeSymbol
-      case tpe => tpe.typeSymbol.owner
-    }
+      case tpe => tpe.typeSymbol.maybeOwner
 
     val prefixes =
       ancestors(owner(tpe)) ++ ancestors(owner(tpe.dealias)) collect {
@@ -366,49 +358,51 @@ object implicitHints:
     val patternResult = pattern.finalResultType
     val scrutineeResult = scrutinee.finalResultType
 
-    val parameter = patternResult.typeConstructor match {
+    val parameter = patternResult.typeConstructor match
       case param: ParamRef => Some(param)
       case _ => None
-    }
 
-    val covariant = variance == Variance.Covariant &&
-      (patternResult.baseClasses contains scrutineeResult.typeSymbol)
+    if parameter forall { scrutineeResult.typeConstructor.baseClasses contains _.dealias.typeSymbol } then
+      val patternSymbol = patternResult.dealias.typeSymbol
+      val scrutineeSymbol = scrutineeResult.dealias.typeSymbol
 
-    val contravariant = variance == Variance.Contravariant &&
-      (scrutineeResult.baseClasses contains patternResult.typeSymbol)
+      val co = patternResult.baseClasses contains scrutineeSymbol
+      val contra = scrutineeResult.baseClasses contains patternSymbol
 
-    val invariant = variance == Variance.Invariant &&
-      (patternResult.baseClasses contains scrutineeResult.typeSymbol) &&
-      (scrutineeResult.baseClasses contains patternResult.typeSymbol)
+      val covariant = variance == Variance.Covariant && co
+      val contravariant = variance == Variance.Contravariant && contra
+      val invariant = variance == Variance.Invariant && co && contra
 
-    if parameter.nonEmpty || covariant || contravariant || invariant then
-      val patternBase = if covariant then patternResult.baseType(scrutineeResult.typeSymbol) else patternResult
-      val scrutineeBase = if contravariant then scrutineeResult.baseType(patternResult.typeSymbol) else scrutineeResult
+      if parameter.nonEmpty || covariant || contravariant || invariant then
+        val patternBase = if covariant then patternResult.baseType(scrutineeSymbol) else patternResult
+        val scrutineeBase = if contravariant then scrutineeResult.baseType(patternSymbol) else scrutineeResult
 
-      val patternArgs = patternBase.typeArgs
-      val scrutineeArgs = scrutineeBase.typeArgs
+        val patternArgs = patternBase.typeArgs
+        val scrutineeArgs = scrutineeBase.typeArgs
 
-      if parameter.nonEmpty && patternArgs.isEmpty then
-        Some(Map(parameter.get -> scrutineeResult))
-      else if patternArgs.size == scrutineeArgs.size then
-        ((patternArgs zip scrutineeArgs zip patternBase.typeConstructor.typeArgVariances)
-          .foldLeft[Option[Map[ParamRef, TypeRepr]]](Some(Map.empty)) {
-            case (instantiations, ((pattern, scrutinee), variance)) =>
-              if !(scrutinee =:= TypeBounds.empty) then
-                instantiations flatMap { instantiations =>
-                  typeInstantiations(pattern, scrutinee, Variance(variance)) map {
-                    _ ++ instantiations
+        if parameter.nonEmpty && patternArgs.isEmpty then
+          Some(Map(parameter.get -> scrutineeResult))
+        else if patternArgs.sizeIs == scrutineeArgs.size then
+          ((patternArgs zip scrutineeArgs zip patternBase.typeConstructor.typeArgVariances)
+            .foldLeft[Option[Map[ParamRef, TypeRepr]]](Some(Map.empty)) {
+              case (instantiations, ((pattern, scrutinee), variance)) =>
+                if !(scrutinee =:= TypeBounds.empty) then
+                  instantiations flatMap { instantiations =>
+                    typeInstantiations(pattern, scrutinee, Variance(variance)) map {
+                      _ ++ instantiations
+                    }
                   }
-                }
+                else
+                  instantiations
+            }
+            map { instantiations =>
+              if parameter.nonEmpty then
+                instantiations + (parameter.get -> scrutineeResult.typeConstructor)
               else
                 instantiations
-          }
-          map { instantiations =>
-            if parameter.nonEmpty then
-              instantiations + (parameter.get -> scrutineeResult.typeConstructor)
-            else
-              instantiations
-          })
+            })
+        else
+          None
       else
         None
     else
@@ -455,8 +449,7 @@ object implicitHints:
         tpe
   end instantiateType
 
-  private def substituteTypeParams(using Quotes)(
-      tpe: quotes.reflect.TypeRepr) =
+  private def substituteTypeParams(using Quotes)(tpe: quotes.reflect.TypeRepr) =
     import quotes.reflect.*
     tpe match
       case tpe: PolyType => tpe.appliedTo(tpe.paramBounds)
@@ -490,8 +483,7 @@ object implicitHints:
     return true
   end mightBeResolvable
 
-  private def implicitArgumentTypes(using Quotes)(
-      tpe: quotes.reflect.TypeRepr): List[quotes.reflect.TypeRepr] =
+  private def implicitArgumentTypes(using Quotes)(tpe: quotes.reflect.TypeRepr): List[quotes.reflect.TypeRepr] =
     import quotes.reflect.*
     tpe match
       case tpe: PolyType =>
@@ -505,8 +497,7 @@ object implicitHints:
       case _ =>
         List.empty
 
-  private def firstNonImplicitArgumentType(using Quotes)(
-      tpe: quotes.reflect.TypeRepr): Option[quotes.reflect.TypeRepr] =
+  private def firstNonImplicitArgumentType(using Quotes)(tpe: quotes.reflect.TypeRepr): Option[quotes.reflect.TypeRepr] =
     import quotes.reflect.*
     tpe match
       case tpe: PolyType =>
@@ -514,7 +505,7 @@ object implicitHints:
       case tpe: MethodType =>
         if tpe.isImplicit then
           firstNonImplicitArgumentType(tpe.resType)
-        else if tpe.paramTypes.size == 1 then
+        else if tpe.paramTypes.sizeIs == 1 then
           Some(tpe.paramTypes.head)
         else
           None
@@ -534,8 +525,7 @@ object implicitHints:
 
     def makePath(term: Term): List[String] = term match
       case Select(qualifier, name) =>
-        if term.symbol == base.symbol ||
-           qualifier.symbol.isPackageDef && name == "package" then
+        if term.symbol == base.symbol || qualifier.symbol.isPackageDef && name == "package" then
           makePath(qualifier)
         else
           makePath(qualifier) :+ name
@@ -610,7 +600,7 @@ object implicitHints:
             val baseType = firstNonImplicitArgumentType(refType)
 
             baseType flatMap {
-              case baseType if isMeaningfulType(baseType) && isMeaningfulType(refType.finalResultType) =>
+              case baseType if isMeaningfulType(baseType) =>
                 typeInstantiations(baseType, tpe, Variance.Contravariant) map { instantiations =>
                   (ref, instantiateType(refType, instantiations))
                 }
@@ -691,6 +681,7 @@ object implicitHints:
     catch
       case NonFatal(_) =>
         defaultOnError
+  end hasPrintSetting
 
   def extensions(using Quotes)(tpe: quotes.reflect.TypeRepr): String =
     import quotes.reflect.*
@@ -703,7 +694,7 @@ object implicitHints:
               if ref.symbol.isExtensionMethod then
                 List(ref.name)
               else
-                val symbol = ref.tpe.widenTermRefByName.finalResultType.typeSymbol
+                val symbol = ref.tpe.widenTermRefByName.finalResultType.dealias.typeSymbol
                 fieldMembers(symbol) ++ methodMembers(symbol) collect {
                   case symbol if isMeaningfulMethod(symbol) =>
                     symbol.name
