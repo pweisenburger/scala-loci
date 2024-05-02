@@ -49,6 +49,7 @@ trait Commons:
     val run = TypeRepr.of[embedding.Run[?, ?]].typeSymbol
     val capture = TypeRepr.of[embedding.Capture[?, ?, ?]].typeSymbol
     val block = TypeRepr.of[embedding.Block[?, ?, ?]].typeSymbol
+    val call = TypeRepr.of[embedding.Call[?, ?]].typeSymbol
     val placed = TypeRepr.of[Placed[?, ?]].typeSymbol
     val subjective = TypeRepr.of[Placed.Subjective[?, ?]].typeSymbol
     val remote = TypeRepr.of[language.Remote[?]].typeSymbol
@@ -57,6 +58,7 @@ trait Commons:
     val selectApplyMultiple = '{ ?[embedding.Select[?]].apply(?[language.Remote[?]], ?[language.Remote[?]]) }.symbol
     val selectApplySeq = '{ ?[embedding.Select[?]].apply(?[Seq[language.Remote[?]]]) }.symbol
     val callApply = '{ ?[embedding.Call[?, ?]].call(?) }.symbol
+    val remoteReference = '{ language.Remote.reference(?) }.symbol
     val peer = TypeRepr.of[language.peer].typeSymbol
     val single = TypeRepr.of[language.Single[?]].typeSymbol
     val optional = TypeRepr.of[language.Optional[?]].typeSymbol
@@ -87,6 +89,8 @@ trait Commons:
     val peerTieMultiple = '{ loci.runtime.Peer.Tie.Multiple }.symbol
     val moduleSignature = '{ loci.runtime.Module.Signature.apply(?[String]) }.symbol
     val moduleSignatureNested = '{ loci.runtime.Module.Signature.apply(?[loci.runtime.Module.Signature], ?[String]) }.symbol
+    val remoteValue = '{ loci.runtime.RemoteValue.apply() }.symbol
+    val remoteRequest = TypeRepr.of[loci.runtime.RemoteRequest].typeSymbol
     val marshallableInfo = TypeRepr.of[loci.runtime.MarshallableInfo].typeSymbol
     val placedValueInfo = TypeRepr.of[loci.runtime.PlacedValueInfo].typeSymbol
     val erased = '{ embedding.erased }.symbol
@@ -95,6 +99,8 @@ trait Commons:
     val function1Apply = '{ ?[Function1[?, ?]].apply(?) }.symbol
     val contextFunction1 = TypeRepr.of[ContextFunction1[?, ?]].typeSymbol
     val contextFunction1Apply = '{ ?[ContextFunction1[?, ?]].apply(using ?) }.symbol
+    val iterableMap = '{ ?[Iterable[?]].map(?) }.symbol
+    val seq = TypeRepr.of[Seq[?]].typeSymbol
     val list = TypeRepr.of[List[?]].typeSymbol
     val map = TypeRepr.of[Map[?, ?]].typeSymbol
     val future = TypeRepr.of[concurrent.Future[?]].typeSymbol
@@ -111,12 +117,16 @@ trait Commons:
     val from = symbols.from.typeRef.appliedTo(List(TypeBounds.empty, TypeBounds.empty))
     val fromSingle = symbols.fromSingle.typeRef.appliedTo(List(TypeBounds.empty, TypeBounds.empty))
     val fromMultiple = symbols.fromMultiple.typeRef.appliedTo(List(TypeBounds.empty, TypeBounds.empty))
+    val single = TypeRepr.of[Tie.Single]
+    val optional = TypeRepr.of[Tie.Optional]
+    val multiple = TypeRepr.of[Tie.Multiple]
     val placedValue = TypeRepr.of[PlacedValue[?, ?]]
     val placed = TypeRepr.of[Placed[?, ?]]
     val subjective = TypeRepr.of[Placed.Subjective[?, ?]]
     val remote = TypeRepr.of[language.Remote[?]]
     val context = TypeRepr.of[Placement.Context[?]]
     val contextResolutionWithFallback = TypeRepr.of[Placement.Context.ResolutionWithFallback[?]]
+    val remoteRef = TypeRepr.of[transmitter.RemoteRef]
     val transmittable = TypeRepr.of[transmitter.Transmittable.Resolution[?, ?, ?, ?, ?]]
     val marshallable = TypeRepr.of[transmitter.Marshallable[?, ?, ?]]
     val transmission = TypeRepr.of[language.transmitter.Transmission[?, ?, ?, ?, ?]]
@@ -127,10 +137,13 @@ trait Commons:
     val moduleSignature = TypeRepr.of[loci.runtime.Module.Signature]
     val system = TypeRepr.of[loci.runtime.System]
     val conversion = TypeRepr.of[Conversion[?, ?]]
+    val seq = TypeRepr.of[Seq[?]]
 
   object names:
     val apply = "apply"
     val tie = "Tie"
+    val from = "from"
+    val to = "to"
     val system = "$loci$sys"
     val systemCreate = "$loci$sys$create"
     val resolutionFailure = "resolutionFailure"
@@ -243,6 +256,19 @@ trait Commons:
         TypeApply.copy(term)(clearTypeApplications(fun), args)
     case _ =>
       term
+
+  def termAsSelection(term: Term, owner: Symbol): Option[Select] = term match
+    case term @ Select(_, _) =>
+      Some(term)
+    case term @ Ident(_) if term.symbol.owner != defn.RootClass && !term.symbol.owner.isPackageDef =>
+      if term.symbol.owner.isClassDef && term.symbol.owner.isModuleDef then
+        Some(Ref(term.symbol.owner.companionModule).select(term.symbol))
+      else if term.symbol.owner.isClassDef && (owner hasAncestor term.symbol.owner) then
+        Some(This(term.symbol.owner).select(term.symbol))
+      else
+        None
+    case _ =>
+      None
 
   def constructFullName(symbol: Symbol, name: Symbol => String, separator: Symbol => String, skip: Symbol => Boolean): String =
     def constructFullName(symbol: Symbol, suffix: String): String =

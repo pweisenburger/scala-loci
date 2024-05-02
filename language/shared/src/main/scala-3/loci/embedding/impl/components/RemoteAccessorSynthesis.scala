@@ -420,6 +420,9 @@ trait RemoteAccessorSynthesis:
   def synthesizeAllPlacedAccessors(module: Symbol): Map[Int | Symbol, Symbol] =
     synthesizeAllPlacedAccessors(module, includeFirst = true)
 
+  def synthesizeAllPeerSignatures(module: Symbol): Map[Symbol, Symbol] =
+    (synthesizeAccessors(module).peers.view.mapValues { (signature, _ , _, _) => signature }).toMap
+
   def synthesizeAccessors(module: Symbol): Accessors = synthesizedAccessorsCache.getOrElseUpdate(module, {
     val tree =
       try module.tree

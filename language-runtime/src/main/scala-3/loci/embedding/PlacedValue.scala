@@ -17,7 +17,6 @@ object PlacedValue extends transmitter.RemoteAccessor.Default:
   type Resolution[P, T] = PlacedValue[P, T] { type on = P }
 
 sealed trait Placed[-P, +T] extends PlacedValue[P, T]:
-  def test: Int = 0
   infix def to[R, U](r: Remote[R])(using Subjectivity[T, U]): U
   def from[R]: T @uncheckedVariance from R
   infix def from[R](r: Remote[R]): T @uncheckedVariance fromSingle R

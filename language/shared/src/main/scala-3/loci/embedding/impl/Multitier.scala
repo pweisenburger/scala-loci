@@ -18,6 +18,7 @@ object Multitier:
       Commons,
       ErrorReporter,
       Annotations,
+      SymbolTrees,
       Placements,
       Peers,
       AccessPath,
@@ -40,8 +41,8 @@ object Multitier:
 
     val processingPhases = List(
       split,
-      rewireInvocations,
-      addAccessors)
+      addAccessors,
+      rewireInvocations)
 
     class Preprocessor extends SafeTreeMap(quotes):
       def trySwapMultitierAnnotation(symbol: Symbol) =
@@ -66,7 +67,12 @@ object Multitier:
           trySwapMultitierAnnotation(stat.symbol)
 
           val preprocessed = preprocessingPhases.foldLeft(stat): (stat, process) =>
-            if canceled then stat else process(stat)
+            if !canceled then
+              val processed = process(stat)
+              symbolTree(processed.symbol) = processed
+              processed
+            else
+              stat
 
           if canceled then preprocessed else super.transformStatement(preprocessed)(owner)
 
@@ -78,8 +84,13 @@ object Multitier:
       override def transformStatement(stat: Statement)(owner: Symbol) = stat match
         case stat: ClassDef if isMultitierModule(stat.symbol) =>
           val processed =
-            if skip then stat
-            else processingPhases.foldLeft(stat) { (stat, process) => process(stat) }
+            if !skip then
+              processingPhases.foldLeft(stat): (stat, process) =>
+                val processed = process(stat)
+                symbolTree(processed.symbol) = processed
+                processed
+            else
+              stat
 
           APIExtraction.extractAPI(processed)
           super.transformStatement(processed)(owner)

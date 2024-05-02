@@ -7,7 +7,6 @@ import utility.reflectionExtensions.*
 
 import scala.annotation.experimental
 import scala.collection.mutable
-import scala.util.control.NonFatal
 
 object PlacedValueSynthesis:
   private val synthesizedDefinitionsCache = mutable.Map.empty[Any, Any]
@@ -16,7 +15,7 @@ object PlacedValueSynthesis:
 
 @experimental
 trait PlacedValueSynthesis:
-  this: Component & Commons & Annotations & Placements & Peers =>
+  this: Component & Commons & Annotations & SymbolTrees & Placements & Peers =>
   import quotes.reflect.*
 
   case class SynthesizedPlacedValues(symbol: Symbol, parents: List[TypeRepr])
@@ -210,6 +209,9 @@ trait PlacedValueSynthesis:
           else if peer == defn.AnyClass then declaredParentPlacedValues ++ inheritedParentPlacedValues :+ types.placedValues
           else synthesizedPlacedValues(module, defn.AnyClass).symbol.typeRef :: declaredParentPlacedValues ++ inheritedParentPlacedValues)
 
+      if peer == defn.AnyClass then
+        SymbolMutator.getOrErrorAndAbort.invalidateMemberCaches(module)
+
       synthesizedPlacedValuesCache.getOrElse((module, peer), {
         val symbol = syntheticTrait(
           module,
@@ -224,13 +226,9 @@ trait PlacedValueSynthesis:
 
             val indices = mutable.Map.empty[Symbol, Int]
 
-            val tree =
-              try module.tree
-              catch case NonFatal(_) => Literal(NullConstant())
-
             val declarations =
-              module.tree match
-                case ClassDef(_, _, _, _, body) =>
+              symbolTree(module) match
+                case Some(ClassDef(_, _, _, _, body)) =>
                   body flatMap:
                     case stat: Definition =>
                       synthesizedDefinitions(stat.symbol).fold(List.empty): definitions =>

@@ -16,8 +16,7 @@ trait PlacedBlocks:
 
   private object Selection:
     def unapply(term: Term) = term match
-      case Apply(TypeApply(Select(_, _), remoteTypeTree :: _), remotes)
-          if term.symbol.maybeOwner == symbols.select =>
+      case Apply(TypeApply(_, remoteTypeTree :: _), remotes) if term.symbol.maybeOwner == symbols.select =>
         Some(remoteTypeTree, remotes)
       case _ =>
         None
@@ -189,8 +188,8 @@ trait PlacedBlocks:
             MethodType(paramNames)(_ => paramTypes, _ => languageType),
             Flags.PrivateLocal | Flags.Synthetic,
             Symbol.noSymbol)
-
           trySetContextResultCount(symbol, 1)
+          SymbolMutator.getOrErrorAndAbort.enter(module.symbol, symbol)
 
           val erased = Typed(Ref(symbols.erased), TypeTree.of(using embeddingType.asType))
 

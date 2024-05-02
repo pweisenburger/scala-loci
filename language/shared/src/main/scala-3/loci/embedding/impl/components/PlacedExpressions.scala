@@ -3,6 +3,7 @@ package embedding
 package impl
 package components
 
+import utility.implicitHints
 import utility.reflectionExtensions.*
 
 import scala.annotation.experimental
@@ -108,6 +109,7 @@ trait PlacedExpressions:
           TypePlacementTypesEraser(pos, checkOnly = true).transform(widenedErasedType)
 
       erasedType
+    end transform
   end TypePlacementTypesEraser
 
   private abstract class AdapatingDefinitionTypeCopier(substitute: (Symbol, Symbol) => Unit, replace: (Symbol, Symbol) => Unit) extends SafeTreeMap(quotes):
@@ -190,7 +192,7 @@ trait PlacedExpressions:
 
       // check there are no remaining multitier language constructs
       case MultitierConstructFragment() =>
-        errorAndCancel("Multitier construct should have been processed by macro expansion but was not.", term.posInUserCode)
+        errorAndCancel("Illegal use of multitier construct.", term.posInUserCode)
         term
 
       // check access to subjective placed values
@@ -210,11 +212,19 @@ trait PlacedExpressions:
       // keep direct placed values accesses through the intended language constructs that expect placed values
       // check arguments before applied function to improve error messages
       case term @ Apply(_, _) =>
+        def skipApplications(term: Term): Term = term match
+          case TypeApply(fun, args) =>
+            TypeApply.copy(term)(skipApplications(fun), transformTypeTrees(args)(owner))
+          case Apply(fun, args) =>
+            Apply.copy(term)(skipApplications(fun), transformTerms(args)(owner))
+          case _ =>
+            transformTerm(term)(owner)
+
         val args = clearTypeApplications(term.fun).tpe match
           case MethodType(_, paramTypes, _) =>
             paramTypes zip term.args map: (tpe, arg) =>
               if !(tpe =:= TypeRepr.of[Nothing]) && tpe <:< types.placedValue then
-                super.transformTerm(arg)(owner)
+                skipApplications(arg)
               else
                 transformTerm(arg)(owner)
           case _ =>
@@ -226,33 +236,41 @@ trait PlacedExpressions:
 
       // keep direct placed values accesses through the intended language constructs defined on placed values
       case Select(qualifier @ PlacedValueReference(_, _), name) if !checkOnly && term.symbol.owner == symbols.placed =>
-        qualifier match
-          case Apply(fun: Select, args) =>
-            Select.copy(term)(Apply.copy(qualifier)(Select.copy(fun)(super.transformTerm(fun.qualifier)(owner), fun.name), args), name)
-          case _ =>
-            Select.copy(term)(transformTerm(qualifier)(owner), name)
+        Select.copy(term)(super.transformTerm(qualifier)(owner), name)
 
-      // check other placed value accesses
-      case term @ Select(_, name) if !checkOnly =>
-        PlacementInfo(term.qualifier.tpe.widenTermRefByName.resultType).fold(super.transformTerm(term)(owner)): placementInfo =>
-          val qualifier = transformTerm(term.qualifier)(owner)
-          val tpe = if placementInfo.modality.subjective then TypeRepr.of[Unit] else placementInfo.valueType
-          if !canceled && !placementInfo.canonical && !(tpe.baseClasses contains term.symbol.owner) then
-            errorAndCancel(s"${term.symbol} is not a member of ${tpe.safeShow(Printer.SafeTypeReprShortCode)}", term.posInUserCode)
-            term
-          else
-            Select.copy(term)(qualifier, name)
-
-      // check type of identifiers
-      case Ident(_) | Select(_, _) if checkOnly =>
-        TypePlacementTypesEraser(term.posInUserCode, checkOnly = true).transform(term.tpe)
-        super.transformTerm(term)(owner)
-
-      // check that there are no remaining multitier terms
       case _ =>
-        if term.symbol.exists && term.symbol.owner == symbols.placed then
-          errorAndCancel("Illegal use of multitier construct.", term.posInUserCode)
-        super.transformTerm(term)(owner)
+        termAsSelection(term, owner) match
+          // check other placed value accesses
+          case Some(select) if !checkOnly =>
+            PlacementInfo(select.qualifier.tpe.widenTermRefByName.resultType).fold(super.transformTerm(term)(owner)): placementInfo =>
+              val qualifier = transformTerm(select.qualifier)(owner)
+              val tpe = if placementInfo.modality.subjective then TypeRepr.of[Unit] else placementInfo.valueType
+              if !canceled && !placementInfo.canonical && !(tpe.baseClasses contains select.symbol.owner) then
+                errorAndCancel(s"${select.symbol} is not a member of ${tpe.safeShow(Printer.SafeTypeReprShortCode)}", select.posInUserCode)
+                select
+              else
+                Select.copy(select)(qualifier, select.name)
+
+          case _ => term match
+            // check type of identifiers
+            case Ident(_) | Select(_, _) if checkOnly =>
+              TypePlacementTypesEraser(term.posInUserCode, checkOnly = true).transform(term.tpe)
+              super.transformTerm(term)(owner)
+
+            // check that there are no remaining multitier terms
+            case _ =>
+              if term.symbol.exists && term.symbol.owner == symbols.placed && term.symbol.name != names.to then
+                val name = term.symbol.name
+                val access =
+                  if term.symbol.paramSymss exists { _ exists { _.isTerm } } then "(...)"
+                  else if term.symbol.paramSymss exists { _.nonEmpty } then "[...]"
+                  else ""
+                errorAndCancel(
+                  s"Illegal use of multitier construct. Remote Selection using `$name` must be followed by a remote access invocation: " +
+                  s"`<placed value>.$name$access.<transmit to local peer>`${implicitHints.extensions(term.tpe)}", term.posInUserCode)
+
+              super.transformTerm(term)(owner)
+    end transformTerm
 
     override def transformTypeTree(tree: TypeTree)(owner: Symbol) = tree match
       // check inferred type trees and transform them to erase placement types (if possible)
@@ -276,6 +294,7 @@ trait PlacedExpressions:
         if !canceled then
           TypePlacementTypesEraser(transformTree.posInUserCode, checkOnly = true).transform(transformTree.tpe)
         transformTree
+    end transformTypeTree
   end ExpressionPlacementTypesEraser
 
   private class ExpressionPlacementTypesEraserAndUnitCoercer(checkOnly: Boolean, substitute: (Symbol, Symbol) => Unit, replace: (Symbol, Symbol) => Unit)

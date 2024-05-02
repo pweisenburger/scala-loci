@@ -37,8 +37,8 @@ trait AccessPath:
          from.hasAncestor(path.symbol.moduleClass) then
         multitierOuterAccess(from, path.symbol.moduleClass, peer)
       else if isMultitierNestedPath(qualifier.symbol) then
-        synthesizedDefinitions(path.symbol) flatMap: nestedModule =>
-          multitierAccessPath(qualifier, from, peer) map { _.select(nestedModule.binding) }
+        synthesizedDefinitions(path.symbol) flatMap: definition =>
+          multitierAccessPath(qualifier, from, peer) map { _.select(definition.binding) }
       else
         None
     case _ =>
