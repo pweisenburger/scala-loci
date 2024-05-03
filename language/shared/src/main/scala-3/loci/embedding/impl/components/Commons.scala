@@ -149,6 +149,8 @@ trait Commons:
     val resolutionFailure = "resolutionFailure"
     val anon = "$anon"
 
+  object Tuple extends TupleExtractor(quotes)
+
   object MaybeTyped:
     def unapply(term: Term): Some[Term] = term match
       case Typed(expr, _) => unapply(expr)

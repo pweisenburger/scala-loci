@@ -46,7 +46,7 @@ trait PlacedValueSplitting:
         self + (symbol -> (stats.toList ++ self.getOrElse(symbol, List.empty)))
 
     val placedBodies = module.body.foldLeft(Map.empty[Symbol, List[Statement]]):
-      case (bodies, stat @ (_: ValDef | _: DefDef)) =>
+      case (bodies, stat @ (_: ValDef | _: DefDef)) if !stat.symbol.isModuleDef =>
         synthesizedDefinitions(stat.symbol).fold(bodies): definitions =>
           val peer = PlacementInfo(stat.symbol.info.widenTermRefByName.resultType).fold(defn.AnyClass) { _.peerType.typeSymbol }
 

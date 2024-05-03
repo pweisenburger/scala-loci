@@ -40,6 +40,9 @@ trait RemoteAccessorSynthesis:
   private val synthesizedAccessorsCache = RemoteAccessorSynthesis.synthesizedAccessorsCache match
     case cache: mutable.Map[Symbol, Accessors] @unchecked => cache
 
+  def meaningfulArgumentType(tpe: TypeRepr) =
+    tpe.typeSymbol != defn.UnitClass && tpe.typeSymbol != defn.NullClass && tpe.typeSymbol != defn.NothingClass
+
   def synthesizeModuleSignature(module: Symbol) = synthesizedModuleSignatureCache.getOrElseUpdate(module, {
     val hasMultitierParent = module.typeRef.baseClasses.tail exists isMultitierModule
     val flags = Flags.Lazy | (if hasMultitierParent then Flags.Override else Flags.EmptyFlags)
@@ -178,8 +181,6 @@ trait RemoteAccessorSynthesis:
     if symbol.flags is Flags.Module then "object"
     else if symbol.flags is Flags.Trait then "trait"
     else "class"
-
-  private object Tuple extends TupleExtractor(quotes)
 
   private def accessorSignature(name: String | List[TypeToken], params: List[List[TypeRepr]], result: TypeRepr) =
     val paramsSignature = params flatMap: params =>
@@ -928,8 +929,17 @@ trait RemoteAccessorSynthesis:
                     checkTransmittableConformation(transmittable):
                       marshallableConstruction(transmittable) map: rhs =>
                         () =>
-                          transmittableTypeMap.addNewTypeEntry(transmittable.types.base, transmittable)
-                          generateMarshallable(transmittable, rhs)
+                          transmittableTypeMap.lookupType(required.base) match
+                            case Some(transmittable) =>
+                              checkTransmittableConformation(transmittable):
+                                transmittable.marshallable match
+                                  case Some(marshallable, _) =>
+                                    Right(Some(marshallable))
+                                  case _ =>
+                                    generateMarshallable(transmittable, rhs)
+                            case _ =>
+                              transmittableTypeMap.addNewTypeEntry(transmittable.types.base, transmittable)
+                              generateMarshallable(transmittable, rhs)
 
               if result.isLeft && allowSkippingAbstract then
                 Right(() => Right(None))
@@ -937,25 +947,22 @@ trait RemoteAccessorSynthesis:
                 result
     end generateMarshallable
 
-    def meaningfulType(tpe: TypeRepr) =
-      tpe.typeSymbol != defn.UnitClass && tpe.typeSymbol != defn.NullClass && tpe.typeSymbol != defn.NothingClass
-
-    def argumentTypes(tpe: TypeRepr): List[TypeRepr] = tpe match
-      case MethodType(_, paramTypes, resType) =>
-        (paramTypes filter meaningfulType) ++ argumentTypes(resType)
-      case PolyType(_, _, resType) =>
-        argumentTypes(resType)
-      case _ =>
-        List.empty
-
-    val allowSkippingAbstract = accessorGeneration == Deferred || accessorGeneration == Preferred
-
     var placedIndex = 0
     var anonymousPlacedIndex = 0
+
+    val allowSkippingAbstract = accessorGeneration == Deferred || accessorGeneration == Preferred
 
     val accessors = values.reverseIterator ++ inheritedValues flatMap: (original, signature, tpe, position) =>
       val valueAccessed = original forall { accessed contains _ }
       val valuePrivate = original forall { _.flags is Flags.Private }
+
+      def argumentTypes(tpe: TypeRepr): List[TypeRepr] = tpe match
+        case MethodType(_, paramTypes, resType) =>
+          (paramTypes filter meaningfulArgumentType) ++ argumentTypes(resType)
+        case PolyType(_, _, resType) =>
+          argumentTypes(resType)
+        case _ =>
+          List.empty
 
       if !canceled && (valueAccessed || accessorGeneration != Deferred) then
         val arguments = argumentTypes(tpe)

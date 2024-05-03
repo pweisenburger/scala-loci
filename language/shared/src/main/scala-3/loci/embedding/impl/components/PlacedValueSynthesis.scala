@@ -137,12 +137,13 @@ trait PlacedValueSynthesis:
     val module = if symbol.isClassDef then symbol else symbol.moduleClass
     val modulePlacedValues = synthesizedPlacedValues(module, defn.AnyClass).symbol
     val ownerPlacedValues = synthesizedPlacedValues(module.owner, defn.AnyClass).symbol
-    synthesizedDefinitionsCache.getOrElse(symbol, {
+    synthesizedDefinitionsCache.getOrElse(module, {
       val binding = ownerPlacedValues.fieldMember(module.companionModule.name) orElse:
                                                                                         // Flags.Final | Flags.Lazy | Flags.Module | Flags.StableRealizable
         newVal(ownerPlacedValues, module.companionModule.name, modulePlacedValues.typeRef, Flags.Deferred | Flags.Lazy | Flags.StableRealizable, Symbol.noSymbol)
       val definition = SynthesizedDefinitions(module, binding, None, List.empty)
       synthesizedDefinitionsCache += symbol -> definition
+      synthesizedDefinitionsCache += module -> definition
       definition
     })
   })
@@ -151,7 +152,7 @@ trait PlacedValueSynthesis:
     if !(symbol.flags is Flags.Synthetic) || (symbol.name startsWith "$loci$anon$") then
       if !symbol.isModuleDef && (symbol.isField || symbol.isMethod) then
         Some(synthesizedValOrDef(symbol))
-      else if symbol.isModuleDef && symbol.isClassDef then
+      else if symbol.isModuleDef then
         Some(synthesizedModule(symbol))
       else
         None
@@ -230,7 +231,7 @@ trait PlacedValueSynthesis:
               symbolTree(module) match
                 case Some(ClassDef(_, _, _, _, body)) =>
                   body flatMap:
-                    case stat: Definition =>
+                    case stat: Definition if !stat.symbol.isModuleDef || (stat.symbol.isModuleDef && stat.symbol.isClassDef) =>
                       synthesizedDefinitions(stat.symbol).fold(List.empty): definitions =>
                         collectDeclarations(definitions.binding :: definitions.init.toList ++ definitions.impls)
                     case statement: Term =>
@@ -250,8 +251,11 @@ trait PlacedValueSynthesis:
             val decls =
               if declarations.isEmpty then
                 module.declarations flatMap: decl =>
-                  synthesizedDefinitions(decl).fold(List.empty): definitions =>
-                    collectDeclarations(definitions.binding :: definitions.init.toList ++ definitions.impls)
+                  if !decl.isModuleDef || (decl.isModuleDef && decl.isClassDef) then
+                    synthesizedDefinitions(decl).fold(List.empty): definitions =>
+                      collectDeclarations(definitions.binding :: definitions.init.toList ++ definitions.impls)
+                  else
+                    List.empty
               else
                 declarations
 

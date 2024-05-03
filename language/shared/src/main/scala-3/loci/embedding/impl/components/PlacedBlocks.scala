@@ -86,7 +86,7 @@ trait PlacedBlocks:
     var blockIndex = 0
 
     def isLocalVariable(symbol: Symbol) =
-      symbol.maybeOwner != module && (symbol hasAncestor module.symbol)
+      symbol.maybeOwner != module.symbol && (symbol hasAncestor module.symbol)
 
     def subsitituteVariables(term: Term, owner: Symbol, substitutions: Map[Symbol, Symbol]) =
       object variableSubstitutor extends SafeTreeMap(quotes):
@@ -244,9 +244,12 @@ trait PlacedBlocks:
           super.transformTerm(term)(owner)
 
     val body = module.body flatMap: statement =>
-      val statements = transformer.transformStatement(statement)(Symbol.spliceOwner) :: blockMethods.toList
-      blockMethods.clear()
-      statements
+      if !isMultitierModule(statement.symbol) then
+        val statements = transformer.transformStatement(statement)(Symbol.spliceOwner) :: blockMethods.toList
+        blockMethods.clear()
+        statements
+      else
+        List(statement)
 
     ClassDef.copy(module)(module.name, module.constructor, module.parents, module.self, body)
   end liftRemoteBlocks

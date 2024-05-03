@@ -24,24 +24,25 @@ trait AccessPath:
     multitierOuterAccess(from, This(synthesizedPlacedValues(from, peer).symbol))
   end multitierOuterAccess
 
-  def multitierAccessPath(path: Term, from: Symbol, peer: Symbol): Option[Term] = path match
-    case Ident(_) if isMultitierModule(path.symbol) && from.hasAncestor(path.symbol.moduleClass) =>
-      multitierOuterAccess(from, path.symbol.moduleClass, peer)
-    case This(_) if isMultitierModule(path.symbol) && from.hasAncestor(path.symbol) =>
-      multitierOuterAccess(from, path.symbol, peer)
-    case Select(qualifier, _) =>
-      if isMultitierModule(path.symbol) &&
-         !isMultitierNestedPath(qualifier.symbol) &&
-         isStablePath(qualifier) &&
-         path.symbol.moduleClass.exists &&
-         from.hasAncestor(path.symbol.moduleClass) then
+  def multitierAccessPath(path: Term, from: Symbol, peer: Symbol): Option[Term] =
+    termAsSelection(path, from) getOrElse path match
+      case Ident(_) if isMultitierModule(path.symbol) && (from hasAncestor path.symbol.moduleClass) =>
         multitierOuterAccess(from, path.symbol.moduleClass, peer)
-      else if isMultitierNestedPath(qualifier.symbol) then
-        synthesizedDefinitions(path.symbol) flatMap: definition =>
-          multitierAccessPath(qualifier, from, peer) map { _.select(definition.binding) }
-      else
+      case This(_) if isMultitierModule(path.symbol) && (from hasAncestor path.symbol) =>
+        multitierOuterAccess(from, path.symbol, peer)
+      case Select(qualifier, _) =>
+        if isMultitierModule(path.symbol) &&
+           !isMultitierNestedPath(qualifier.symbol) &&
+           isStablePath(qualifier) &&
+           path.symbol.moduleClass.exists &&
+           (from hasAncestor path.symbol.moduleClass) then
+          multitierOuterAccess(from, path.symbol.moduleClass, peer)
+        else if isMultitierNestedPath(qualifier.symbol) then
+          synthesizedDefinitions(path.symbol) flatMap: definition =>
+            multitierAccessPath(qualifier, from, peer) map { _.select(definition.binding) }
+        else
+          None
+      case _ =>
         None
-    case _ =>
-      None
   end multitierAccessPath
 end AccessPath

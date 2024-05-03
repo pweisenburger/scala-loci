@@ -266,7 +266,7 @@ trait PlacedExpressions:
                   else if term.symbol.paramSymss exists { _.nonEmpty } then "[...]"
                   else ""
                 errorAndCancel(
-                  s"Illegal use of multitier construct. Remote Selection using `$name` must be followed by a remote access invocation: " +
+                  s"Illegal use of multitier construct. Remote selection using `$name` must be followed by a remote access invocation: " +
                   s"`<placed value>.$name$access.<transmit to local peer>`${implicitHints.extensions(term.tpe)}", term.posInUserCode)
 
               super.transformTerm(term)(owner)

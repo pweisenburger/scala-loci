@@ -74,10 +74,10 @@ object Multitier:
             else
               stat
 
-          if canceled then preprocessed else super.transformStatement(preprocessed)(owner)
+          super.transformStatement(preprocessed)(owner)
 
         case stat =>
-          if canceled then stat else super.transformStatement(stat)(owner)
+          super.transformStatement(stat)(owner)
     end Preprocessor
 
     class Processor(skip: Boolean) extends SafeTreeMap(quotes):
@@ -108,7 +108,7 @@ object Multitier:
           object processor extends Processor(canceled)
           val processed @ ClassDef(_, _, _, _, _) = processor.transformStatement(preprocessed)(tree.symbol.owner): @unchecked
 
-          reportErrors()
+          reportErrors(abortOnErrors = true)
           List(processed)
         else
           List(tree)
