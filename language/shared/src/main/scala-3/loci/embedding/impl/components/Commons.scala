@@ -148,10 +148,17 @@ trait Commons:
     val tie = "Tie"
     val from = "from"
     val to = "to"
+    val anon = "$anon"
     val system = "$loci$sys"
     val systemCreate = "$loci$sys$create"
+    val module = "$loci$mod"
+    val signature = "$loci$sig"
+    val peerSignature = "$loci$peer$sig$"
+    val peerTies = "$loci$peer$ties$"
+    val block = "$loci$anon$"
+    val placed = "$loci$placed$"
+    val marshalling = "$loci$marshalling$"
     val resolutionFailure = "resolutionFailure"
-    val anon = "$anon"
 
   object Tuple extends TupleExtractor(quotes)
 

@@ -10,7 +10,7 @@ trait RemoteAccessorGeneration:
   this: Component & RemoteAccessorSynthesis =>
   import quotes.reflect.*
 
-  def addAccessors(module: ClassDef): ClassDef =
+  def materializeAccessors(module: ClassDef): ClassDef =
     val accessors = synthesizeAccessors(module.symbol)
 
     val (_, identifierDefinition) = accessors.identifier
@@ -31,5 +31,5 @@ trait RemoteAccessorGeneration:
       placedDefinitions.toList
 
     ClassDef.copy(module)(module.name, module.constructor, module.parents, module.self, definitions ++ module.body)
-  end addAccessors
+  end materializeAccessors
 end RemoteAccessorGeneration

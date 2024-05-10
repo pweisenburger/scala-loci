@@ -46,8 +46,8 @@ trait RemoteAccessorSynthesis:
   def synthesizeModuleSignature(module: Symbol) = synthesizedModuleSignatureCache.getOrElseUpdate(module, {
     val hasMultitierParent = module.typeRef.baseClasses.tail exists isMultitierModule
     val flags = Flags.Lazy | (if hasMultitierParent then Flags.Override else Flags.EmptyFlags)
-    val identifier = newVal(module, "$loci$mod", TypeRepr.of[String], flags, Symbol.noSymbol)
-    val signature = newVal(module, "$loci$sig", types.moduleSignature, flags, Symbol.noSymbol)
+    val identifier = newVal(module, names.module, TypeRepr.of[String], flags, Symbol.noSymbol)
+    val signature = newVal(module, names.signature, types.moduleSignature, flags, Symbol.noSymbol)
     SymbolMutator.getOrErrorAndAbort.enter(module, identifier)
     SymbolMutator.getOrErrorAndAbort.enter(module, signature)
     (identifier, signature)
@@ -58,8 +58,8 @@ trait RemoteAccessorSynthesis:
     val isOverriddingPeer = module.typeRef.baseClasses.tail exists { overridden contains _ }
     val overridingFlags = if isOverriddingPeer then Flags.Override else Flags.EmptyFlags
     val info = ByNameType(symbols.map.typeRef.appliedTo(List(types.peerSignature, types.peerTie)))
-    val signature = newVal(module, s"$$loci$$peer$$sig$$${peer.name}", types.peerSignature, Flags.Lazy | overridingFlags, Symbol.noSymbol)
-    val ties = newMethod(module, s"$$loci$$peer$$ties$$${peer.name}", info, overridingFlags, Symbol.noSymbol)
+    val signature = newVal(module, s"${names.peerSignature}${peer.name}", types.peerSignature, Flags.Lazy | overridingFlags, Symbol.noSymbol)
+    val ties = newMethod(module, s"${names.peerTies}${peer.name}", info, overridingFlags, Symbol.noSymbol)
     SymbolMutator.getOrErrorAndAbort.enter(module, signature)
     SymbolMutator.getOrErrorAndAbort.enter(module, ties)
     (signature, ties)
@@ -490,7 +490,7 @@ trait RemoteAccessorSynthesis:
 
       val name = symbolForName match
         case Some(symbol) =>
-          if symbol.name startsWith "$loci$anon$" then "remote block"
+          if symbol.name startsWith names.block then "remote block"
           else if symbol.isClassDef && symbol.isModuleDef then s"placed value ${symbol.companionModule.name}"
           else if symbol.isMethod then s"placed value ${symbol.name}${signature(symbol)}"
           else s"placed value ${symbol.name}"
@@ -523,7 +523,7 @@ trait RemoteAccessorSynthesis:
     end accessorGenerationFailureMessageProlog
 
     def marshallingIdentifier(name: String) =
-      val identifier = name.stripPrefix("$loci$marshalling$").replace('$', ':')
+      val identifier = name.stripPrefix(names.marshalling).replace('$', ':')
       if identifier.length != name.length then identifier else s"<$identifier>"
 
     def isLocalVariable(symbol: Symbol) =
@@ -692,7 +692,7 @@ trait RemoteAccessorSynthesis:
         module.typeRef.baseClasses.tail flatMap: parent =>
           parent.declarations flatMap: decl =>
             if (decl.isMethod || decl.isField) &&
-               (!(decl.flags is Flags.Synthetic) && !(decl.flags is Flags.Artifact)|| (decl.name startsWith "$loci$anon$")) &&
+               (!(decl.flags is Flags.Synthetic) && !(decl.flags is Flags.Artifact) || (decl.name startsWith names.block)) &&
                !(overridden contains decl) then
               val tpe = ThisType(module).memberType(decl)
               PlacementInfo(tpe.resultType) flatMap: placementInfo =>
@@ -840,7 +840,7 @@ trait RemoteAccessorSynthesis:
 
       def generateMarshallableName() =
         name getOrElse:
-          val name = s"$$loci$$marshalling$$$mangledName$$$marshallableIndex"
+          val name = s"${names.marshalling}$mangledName$$$marshallableIndex"
           marshallableIndex += 1
           name
 
@@ -1008,7 +1008,7 @@ trait RemoteAccessorSynthesis:
                     arguments == argumentIdentifier && result == resultIdentifier
 
             Option.unless(inheritedPlacedWithIdenticalMarshallables):
-              val name = s"$$loci$$placed$$$mangledName$$$placedIndex"
+              val name = s"${names.placed}$mangledName$$$placedIndex"
               placedIndex += 1
 
               val signatureConstruction =

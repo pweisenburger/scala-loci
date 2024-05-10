@@ -179,7 +179,7 @@ trait PlacedBlocks:
           val languageType = symbols.`language.on`.typeRef.appliedTo(List(placed, remote))
           val embeddingType = symbols.`embedding.on`.typeRef.appliedTo(List(placed, remote))
 
-          val name = s"$$loci$$anon$$$blockIndex"
+          val name = s"${names.block}$blockIndex"
           blockIndex += 1
 
           val symbol = newMethod(

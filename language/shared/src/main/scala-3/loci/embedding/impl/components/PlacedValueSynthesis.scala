@@ -149,7 +149,7 @@ trait PlacedValueSynthesis:
   })
 
   def synthesizedDefinitions(symbol: Symbol): Option[SynthesizedDefinitions] =
-    if !(symbol.flags is Flags.Synthetic) && !(symbol.flags is Flags.Artifact) || (symbol.name startsWith "$loci$anon$") then
+    if !(symbol.flags is Flags.Synthetic) && !(symbol.flags is Flags.Artifact) || (symbol.name startsWith names.block) then
       if !symbol.isModuleDef && (symbol.isField || symbol.isMethod) then
         Some(synthesizedValOrDef(symbol))
       else if symbol.isModuleDef then

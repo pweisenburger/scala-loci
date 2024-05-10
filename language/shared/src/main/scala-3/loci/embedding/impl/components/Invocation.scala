@@ -228,7 +228,7 @@ trait Invocation:
         None
   end destructPlacedValueAccess
 
-  private def check(
+  private def checkTieMultiplicities(
       term: Term,
       local: TypeRepr,
       remote: TypeRepr,
@@ -284,7 +284,7 @@ trait Invocation:
                 s"No tie is specified from ${local.safeShow(Printer.SafeTypeReprShortCode)} peer " +
                 s"to ${remote.safeShow(Printer.SafeTypeReprShortCode)} peer.",
                 term.posInUserCode.endPosition)
-  end check
+  end checkTieMultiplicities
 
   def rewireInvocations(module: ClassDef): ClassDef =
     object invocationRewriter extends SafeTreeMap(quotes):
@@ -334,8 +334,8 @@ trait Invocation:
             def remoteAccessArguments(remote: TypeRepr, reference: Term, arguments: List[Term]) =
               if !canceled && peerAccessPath(reference, necessarilyPlaced = true).nonEmpty then
                 val key =
-                  if (reference.symbol.flags is Flags.Synthetic) && (reference.symbol.name startsWith "$loci$anon$") then
-                    try reference.symbol.name.drop(11).toInt
+                  if (reference.symbol.flags is Flags.Synthetic) && (reference.symbol.name startsWith names.block) then
+                    try reference.symbol.name.drop(names.block.length).toInt
                     catch case _: NumberFormatException => reference.symbol
                   else
                     reference.symbol
@@ -375,7 +375,7 @@ trait Invocation:
 
                 val result =
                   access flatMap: (_, reference, arguments) =>
-                    check(term, l, r, selectionMode, Some(m), call)
+                    checkTieMultiplicities(term, l, r, selectionMode, Some(m), call)
 
                     remoteAccessArguments(r, reference, arguments) map: (system, placed, signature, arguments) =>
                       val result =
@@ -413,7 +413,8 @@ trait Invocation:
                 val result =
                   access flatMap : (placementInfo, reference, arguments) =>
                     val remotePeerType = selectionMode.maybeType getOrElse placementInfo.peerType
-                    check(term, peerType, remotePeerType, selectionMode, tie = None, call = true)
+                    checkTieMultiplicities(term, peerType, remotePeerType, selectionMode, tie = None, call = true)
+
                     remoteAccessArguments(remotePeerType, reference, arguments) map: (system, placed, signature, arguments) =>
                       val result =
                         ValDef.let(owner, "instances", selectionMode.instances): instances =>

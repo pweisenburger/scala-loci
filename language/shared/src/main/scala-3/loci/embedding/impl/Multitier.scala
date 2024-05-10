@@ -41,7 +41,7 @@ object Multitier:
 
     val processingPhases = List(
       split,
-      addAccessors,
+      materializeAccessors,
       rewireInvocations)
 
     class Preprocessor extends SafeTreeMap(quotes):
