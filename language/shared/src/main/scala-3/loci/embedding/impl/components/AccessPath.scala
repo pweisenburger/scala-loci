@@ -30,6 +30,14 @@ trait AccessPath:
         multitierOuterAccess(from, path.symbol.moduleClass, peer)
       case This(_) if isMultitierModule(path.symbol) && (from hasAncestor path.symbol) =>
         multitierOuterAccess(from, path.symbol, peer)
+      case Super(qualifier @ This(_), identifier) if qualifier.symbol == from =>
+        val thisReference = This(synthesizedPlacedValues(from, peer).symbol)
+        identifier.fold(Some(Super(thisReference, None))): identifier =>
+          qualifier.symbol.typeRef.baseClasses filter { _.name == identifier } match
+            case List(parent) if isMultitierModule(parent) =>
+              Some(Super(thisReference, Some(synthesizedPlacedValues(parent, defn.AnyClass).symbol.name)))
+            case _ =>
+              None
       case Select(qualifier, _) =>
         if isMultitierModule(path.symbol) &&
            !isMultitierNestedPath(qualifier.symbol) &&

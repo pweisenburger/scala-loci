@@ -238,8 +238,8 @@ trait RemoteAccessorSynthesis:
 
   private object PlacedBlockInvocation:
     def unapply(term: Term) = term match
-      case PlacedAccess(_, PlacedBlock(value, captures, pos), _, _, _, _, _) => Some(value, captures, pos)
-      case PlacedBlock(_, captures, pos) => Some(TypeRepr.of[Unit], captures, pos)
+      case PlacedAccess(_, term @ PlacedBlock(value, captures, pos), _, _, _, _, _) => Some(term, value, captures, pos)
+      case PlacedBlock(_, captures, pos) => Some(term, TypeRepr.of[Unit], captures, pos)
       case _ => None
 
   private object Resolution:
@@ -529,34 +529,35 @@ trait RemoteAccessorSynthesis:
     def isLocalVariable(symbol: Symbol) =
       symbol hasAncestor module
 
-    type AccessCollection = (List[TypeToken], Int, List[(Option[Symbol], String, TypeRepr, () => (String, Position))], List[(Term, Position)], Set[Symbol], Option[Position])
+    type AccessCollection = (List[TypeToken], Int, List[(Option[Symbol], String, TypeRepr, () => (String, Position))], List[(Term, Position)], Set[Symbol], IdentityHashMap[Term, Unit], Option[Position])
 
     object accessCollector extends TreeAccumulator[AccessCollection]:
       def foldTree(accesses: AccessCollection, tree: Tree)(owner: Symbol) =
-        val (indexing, index, values, transmittables, accessed, pos) = accesses
+        val (indexing, index, values, transmittables, accessed, blocks, pos) = accesses
         tree match
           case ValDef(_, tpt, rhs) if !(tpt.tpe =:= TypeRepr.of[Nothing]) && tpt.tpe <:< types.transmittable =>
             rhs.fold(accesses):
-              foldOverTree((indexing, index, values, transmittables, accessed, pos), _)(owner)
+              foldOverTree((indexing, index, values, transmittables, accessed, blocks, pos), _)(owner)
 
           case DefDef(_, List() | List(List()), tpt, rhs) if !(tpt.tpe =:= TypeRepr.of[Nothing]) && tpt.tpe <:< types.transmittable =>
             rhs.fold(accesses):
-              foldOverTree((indexing, index, values, transmittables, accessed, pos), _)(owner)
+              foldOverTree((indexing, index, values, transmittables, accessed, blocks, pos), _)(owner)
 
-          case PlacedBlockInvocation(value, captures, position) =>
+          case PlacedBlockInvocation(block, value, captures, position) if !(blocks containsKey block) =>
             val params = captures map { capture => PlacementInfo(capture).fold(capture) { _.valueType } }
             val signature = accessorSignature(indexing ++ List(TypeToken.number(index), TypeToken.`>`), List(params), value)
             val tpe = MethodType(captures.indices.toList map { index => s"arg$index" })(_ => params, _ => value)
             val prolog = () => accessorGenerationFailureMessageProlog(symbolForName = None, symbolForParent = None, noninheritedPosition = Some(position))
-            foldOverTree((indexing, index + 1, (None, signature, tpe, prolog) :: values, transmittables, accessed, pos), tree)(owner)
+            blocks.put(block, ())
+            foldOverTree((indexing, index + 1, (None, signature, tpe, prolog) :: values, transmittables, accessed, blocks, pos), tree)(owner)
 
           case PlacedAccess(_, PlacedValueReference(value, _), _, _, _, _, _) if value.symbol.exists =>
-            foldOverTree((indexing, index, values, transmittables, accessed + value.symbol, pos), tree)(owner)
+            foldOverTree((indexing, index, values, transmittables, accessed + value.symbol, blocks, pos), tree)(owner)
 
           case tree: Term if !(tree.tpe =:= TypeRepr.of[Nothing]) && tree.tpe <:< types.transmittable && !isLocalVariable(tree.symbol) =>
             val treePosition = tree.posInUserCode
             val position = if treePosition != Position.ofMacroExpansion then treePosition else pos getOrElse treePosition
-            foldOverTree((indexing, index, values, (tree, position) :: transmittables, accessed, pos), tree)(owner)
+            foldOverTree((indexing, index, values, (tree, position) :: transmittables, accessed, blocks, pos), tree)(owner)
 
           case Select(qualifier, _) =>
             val treePosition = tree.posInUserCode
@@ -569,20 +570,20 @@ trait RemoteAccessorSynthesis:
                   Position(treePosition.sourceFile, qualifierPosition.end + offset, treePosition.end).endPosition
                 else
                   treePosition.endPosition
-            val accesses = foldOverTree((indexing, index, values, transmittables, accessed, position), tree)(owner)
+            val accesses = foldOverTree((indexing, index, values, transmittables, accessed, blocks, position), tree)(owner)
             val prefix = accesses.take(accesses.size - 1)
             prefix :* pos
 
           case _ =>
-            foldOverTree((indexing, index, values, transmittables, accessed, pos), tree)(owner)
+            foldOverTree((indexing, index, values, transmittables, accessed, blocks, pos), tree)(owner)
     end accessCollector
 
     def collectAccesses(indexing: String | Int, tree: Tree, values: List[(Option[Symbol], String, TypeRepr, () => (String, Position))], transmittables: List[(Term, Position)], accessed: Set[Symbol]) =
       val init = indexing match
         case index: Int => (TypeToken.`<` :: signaturePrefix ++ List(TypeToken.` `, TypeToken("nested"), TypeToken.` `), index)
         case name: String => (List(TypeToken(name), TypeToken.`<`, TypeToken("nested"), TypeToken.` `), 0)
-      val (_, index, collectedValues, collectedTransmittables, collectedAccesses, _) =
-        accessCollector.foldTree(init ++ (values, transmittables, accessed, None), tree)(module)
+      val (_, index, collectedValues, collectedTransmittables, collectedAccesses, _, _) =
+        accessCollector.foldTree(init ++ (values, transmittables, accessed, IdentityHashMap[Term, Unit], None), tree)(module)
       (index, collectedValues, collectedTransmittables, collectedAccesses)
 
     val (_, values, transmittables, accessed) =
@@ -691,7 +692,7 @@ trait RemoteAccessorSynthesis:
         module.typeRef.baseClasses.tail flatMap: parent =>
           parent.declarations flatMap: decl =>
             if (decl.isMethod || decl.isField) &&
-               (!(decl.flags is Flags.Synthetic) || (decl.name startsWith "$loci$anon$")) &&
+               (!(decl.flags is Flags.Synthetic) && !(decl.flags is Flags.Artifact)|| (decl.name startsWith "$loci$anon$")) &&
                !(overridden contains decl) then
               val tpe = ThisType(module).memberType(decl)
               PlacementInfo(tpe.resultType) flatMap: placementInfo =>
@@ -1023,7 +1024,9 @@ trait RemoteAccessorSynthesis:
                   resultMarshallable.types.base,
                   resultMarshallable.types.proxy))
               val symbol = newVal(module, name, info, Flags.Final | Flags.Protected, Symbol.noSymbol)
+
               SymbolMutator.getOrErrorAndAbort.enter(module, symbol)
+              SymbolMutator.getOrErrorAndAbort.resetFlag(module, Flags.NoInits)
 
               inline def reference(symbol: Symbol) =
                 if symbol.owner == types.marshallable.typeSymbol.companionModule.moduleClass then

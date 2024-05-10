@@ -89,6 +89,8 @@ trait Commons:
     val peerTieMultiple = '{ loci.runtime.Peer.Tie.Multiple }.symbol
     val moduleSignature = '{ loci.runtime.Module.Signature.apply(?[String]) }.symbol
     val moduleSignatureNested = '{ loci.runtime.Module.Signature.apply(?[loci.runtime.Module.Signature], ?[String]) }.symbol
+    val invokeRemoteAccess = '{ ?[loci.runtime.System].invokeRemoteAccess(?, ?, ?, ?, ?) }.symbol
+    val subjectiveValue = '{ ?[loci.runtime.System].subjectiveValue(?, ?) }.symbol
     val remoteValue = '{ loci.runtime.RemoteValue.apply() }.symbol
     val remoteRequest = TypeRepr.of[loci.runtime.RemoteRequest].typeSymbol
     val marshallableInfo = TypeRepr.of[loci.runtime.MarshallableInfo].typeSymbol
@@ -100,6 +102,7 @@ trait Commons:
     val contextFunction1 = TypeRepr.of[ContextFunction1[?, ?]].typeSymbol
     val contextFunction1Apply = '{ ?[ContextFunction1[?, ?]].apply(using ?) }.symbol
     val iterableMap = '{ ?[Iterable[?]].map(?) }.symbol
+    val iterableNonEmpty = '{ ?[Iterable[?]].nonEmpty }.symbol
     val seq = TypeRepr.of[Seq[?]].typeSymbol
     val list = TypeRepr.of[List[?]].typeSymbol
     val map = TypeRepr.of[Map[?, ?]].typeSymbol
@@ -197,6 +200,8 @@ trait Commons:
       symbol hasAncestor { ancestors contains _ }
     def orElse(other: Symbol): Symbol =
       if symbol.exists then symbol else other
+    def fold[T](ifEmpty: => T)(f: Symbol => T): T =
+      if symbol.exists then f(symbol) else ifEmpty
 
   def newMethod(parent: Symbol, name: String, tpe: TypeRepr, flags: Flags, privateWithin: Symbol) =
     val symbol = Symbol.newMethod(parent, name, tpe, Flags.EmptyFlags, privateWithin)
@@ -244,7 +249,7 @@ trait Commons:
     symbol.exists && (isMultitierModule(symbol) || symbol.isModuleDef && isMultitierNestedPath(symbol.maybeOwner))
 
   def isStablePath(term: Term): Boolean = term match
-    case This(_) | Ident(_) => true
+    case This(_) | Super(_, _) | Ident(_) => true
     case Select(qualifier, _) => term.symbol.isStable && isStablePath(qualifier)
     case _ => false
 

@@ -149,7 +149,7 @@ trait PlacedValueSynthesis:
   })
 
   def synthesizedDefinitions(symbol: Symbol): Option[SynthesizedDefinitions] =
-    if !(symbol.flags is Flags.Synthetic) || (symbol.name startsWith "$loci$anon$") then
+    if !(symbol.flags is Flags.Synthetic) && !(symbol.flags is Flags.Artifact) || (symbol.name startsWith "$loci$anon$") then
       if !symbol.isModuleDef && (symbol.isField || symbol.isMethod) then
         Some(synthesizedValOrDef(symbol))
       else if symbol.isModuleDef then
@@ -191,12 +191,15 @@ trait PlacedValueSynthesis:
       val separator = if module.isType && !module.isPackageDef && !module.isModuleDef then "#" else "."
 
       def inheritedParentPlacedValues =
-        module.typeRef.baseClasses.tail collect:
-          case parent if isMultitierModule(parent) =>
-            val symbol =
-              if peer == defn.AnyClass then defn.AnyClass
-              else parent.typeMember(peer.name) orElse defn.AnyClass
-            ThisType(module).select(synthesizedPlacedValues(parent, symbol).symbol)
+        module.typeRef.baseClasses.tail flatMap: parent =>
+          if isMultitierModule(parent) then
+            val symbols =
+              if peer == defn.AnyClass then List(defn.AnyClass)
+              else parent.typeMember(peer.name).fold(List(defn.AnyClass)) { symbol => List(symbol, defn.AnyClass) }
+            symbols map: symbol =>
+              ThisType(module).select(synthesizedPlacedValues(parent, symbol).symbol)
+          else
+            List.empty
 
       def declaredParentPlacedValues =
         PeerInfo(ThisType(module).select(peer)).toList flatMap:

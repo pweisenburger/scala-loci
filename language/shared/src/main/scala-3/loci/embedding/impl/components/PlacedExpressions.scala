@@ -51,13 +51,6 @@ trait PlacedExpressions:
         (term.symbol == symbols.erased || term.symbol == symbols.erasedArgs) &&
         !(term.tpe =:= TypeRepr.of[Nothing]) && term.tpe <:< types.placed
 
-  private def peerContext(owner: Symbol): Option[TypeRepr] =
-    if owner.exists then
-      PlacementInfo(owner.info.widenTermRefByName.resultType).fold(peerContext(owner.maybeOwner)): placementInfo =>
-        Some(placementInfo.peerType)
-    else
-      None
-
   private def selectionType(tpe: TypeRepr) = tpe match
     case AppliedType(_, _) | Refinement(_, _, _) =>
       !(tpe =:= TypeRepr.of[Nothing]) &&
@@ -199,14 +192,6 @@ trait PlacedExpressions:
       case PlacedValueReference(_, placementInfo) if !checkOnly =>
         if placementInfo.modality.subjective then
           errorAndCancel("Illegal subjective access.", term.posInUserCode)
-
-        peerContext(owner) foreach: localPeer =>
-          if !(localPeer <:< placementInfo.peerType) then
-            errorAndCancel(
-              s"Access to value on peer ${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)} not allowed " +
-              s"from peer ${localPeer.safeShow(Printer.SafeTypeReprShortCode)}",
-              term.posInUserCode)
-
         super.transformTerm(term)(owner)
 
       // keep direct placed values accesses through the intended language constructs that expect placed values
