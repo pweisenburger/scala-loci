@@ -51,11 +51,19 @@ trait Invocation:
       case Typed(Repeated(args, _), _) => args
       case arg => List(arg)
 
+  private object SubjectiveLocalAccess:
+    def unapply(term: Term) = term match
+      case Apply(Apply(TypeApply(Select(expr @ PlacedValueReference(reference, placementInfo), names.to), _), List(remote)), _)
+          if term.symbol.owner == symbols.placed =>
+        Some(expr, reference, placementInfo, remote)
+      case _ =>
+        None
+
   private object Selection:
     def unapply(term: Term) = term match
-      case Apply(TypeApply(Select(value, names.from), List(remoteTypeTree)), remotes) if term.symbol.owner == symbols.placed =>
+      case Apply(TypeApply(Select(value, names.from), List(remoteTypeTree)), remotes) if term.symbol.maybeOwner == symbols.placed =>
         Some(value, Some(Left(remoteTypeTree.tpe, flattenVarArgs(remotes))))
-      case TypeApply(Select(value, names.from), List(remoteTypeTree)) if term.symbol.owner == symbols.placed =>
+      case TypeApply(Select(value, names.from), List(remoteTypeTree)) if term.symbol.maybeOwner == symbols.placed =>
         Some(value, Some(Right(remoteTypeTree.tpe)))
       case _ =>
         None
@@ -427,6 +435,38 @@ trait Invocation:
                 end result
 
                 result getOrElse super.transformTerm(term)(owner)
+
+              // local access to subjective placed values
+              case SubjectiveLocalAccess(expr, reference, placementInfo, remote) =>
+                val transformedExpr = transformTerm(expr)(owner)
+                val transformedRemote = transformTerm(remote)(owner)
+
+                placementInfo.modality.subjectivePeerType.fold(transformedExpr): subjective =>
+                  val instance =
+                    if !(transformedRemote.tpe derivesFrom symbols.remote) then
+                      Some("another")
+                    else
+                      val remote = transformedRemote.tpe.baseType(symbols.remote).typeArgs.head
+                      if !(remote <:< subjective) then
+                        Some(remote.safeShow(Printer.SafeTypeReprShortCode))
+                      else
+                        None
+
+                  instance match
+                    case Some(instance) =>
+                      errorAndCancel(
+                        s"Value that is subjectively dispatched to ${subjective.safeShow(Printer.SafeTypeReprShortCode)} peer " +
+                        s"cannot be invoked for $instance peer instance.",
+                        term.posInUserCode.startPosition)
+                      term
+                    case _ =>
+                      if isStablePath(reference) then
+                        Select.unique(This(synthesizedPlacedValues(module, peerType.typeSymbol).symbol), names.system)
+                          .select(symbols.subjectiveValue)
+                          .appliedToTypes(List(placementInfo.valueType, subjective))
+                          .appliedTo(transformedExpr, transformedRemote)
+                      else
+                        transformedExpr.select(symbols.function1Apply).appliedTo(transformedRemote)
 
               // placed values on the same peer
               case PlacedValueReference(reference, placementInfo) =>

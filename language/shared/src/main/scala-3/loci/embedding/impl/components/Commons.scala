@@ -49,6 +49,7 @@ trait Commons:
     val run = TypeRepr.of[embedding.Run[?, ?]].typeSymbol
     val capture = TypeRepr.of[embedding.Capture[?, ?, ?]].typeSymbol
     val block = TypeRepr.of[embedding.Block[?, ?, ?]].typeSymbol
+    val narrow = TypeRepr.of[embedding.Narrow].typeSymbol
     val call = TypeRepr.of[embedding.Call[?, ?]].typeSymbol
     val placed = TypeRepr.of[Placed[?, ?]].typeSymbol
     val subjective = TypeRepr.of[Placed.Subjective[?, ?]].typeSymbol

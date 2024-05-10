@@ -14,7 +14,7 @@ trait PlacedExpressions:
   import quotes.reflect.*
 
   private object PlacementLiftingConversion:
-    def unapply(term: Term): Option[Term] = term match
+    def unapply(term: Term) = term match
       case Inlined(Some(call), List(conversion: ValDef), erased @ MaybeTyped(Apply(_, List(rhs))))
         if call.symbol == symbols.placed.companionModule.moduleClass &&
            !(conversion.tpt.tpe =:= TypeRepr.of[Nothing]) && conversion.tpt.tpe <:< types.conversion &&
@@ -40,7 +40,7 @@ trait PlacedExpressions:
         None
 
   private object MultitierConstructFragment:
-    def unapply(term: Term): Boolean = term match
+    def unapply(term: Term) = term match
       case Inlined(Some(call), _, _)
           if call.symbol.hasAncestor(symbols.on, symbols.on.companionModule.moduleClass, symbols.placed.companionModule.moduleClass) =>
         true
@@ -50,6 +50,13 @@ trait PlacedExpressions:
       case _ =>
         (term.symbol == symbols.erased || term.symbol == symbols.erasedArgs) &&
         !(term.tpe =:= TypeRepr.of[Nothing]) && term.tpe <:< types.placed
+
+  private object Narrowing:
+    def unapply(term: Term) = term match
+      case Apply(_, List(arg)) if term.symbol.maybeOwner == symbols.narrow =>
+        Some(arg)
+      case _ =>
+        Some(term)
 
   private def selectionType(tpe: TypeRepr) = tpe match
     case AppliedType(_, _) | Refinement(_, _, _) =>
@@ -209,7 +216,8 @@ trait PlacedExpressions:
           case MethodType(_, paramTypes, _) =>
             paramTypes zip term.args map: (tpe, arg) =>
               if !(tpe =:= TypeRepr.of[Nothing]) && tpe <:< types.placedValue then
-                skipApplications(arg)
+                val Narrowing(expr) = arg
+                skipApplications(expr)
               else
                 transformTerm(arg)(owner)
           case _ =>
@@ -220,7 +228,7 @@ trait PlacedExpressions:
         Apply.copy(term)(fun, args)
 
       // keep direct placed values accesses through the intended language constructs defined on placed values
-      case Select(qualifier @ PlacedValueReference(_, _), name) if !checkOnly && term.symbol.owner == symbols.placed =>
+      case Select(Narrowing(qualifier @ PlacedValueReference(_, _)), name) if !checkOnly && term.symbol.owner == symbols.placed =>
         Select.copy(term)(super.transformTerm(qualifier)(owner), name)
 
       case _ =>

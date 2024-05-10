@@ -7,6 +7,7 @@ import scala.annotation.unchecked.uncheckedVariance
 infix type of[T <: Nothing, P] = T { type on = P }
 @nowarn // use `with` instead of `&` for better IDE compatibility
 infix type on[T, P] = Placed[P, T] with T
+infix type placed[T, P] = Placed[P, T]
 infix type from[T, R] = PlacedValue.Resolution[R, T]
 infix type fromSingle[T, P] = Placed.Selection.Single[P, T]
 infix type fromMultiple[T, P] = Placed.Selection.Multiple[P, T]

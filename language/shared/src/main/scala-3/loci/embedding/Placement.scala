@@ -60,7 +60,7 @@ trait Block[P, R, placed[_, _]]:
     PlacedClean[T, T, U]): U per R placed P = erased
 
 trait Narrow:
-  def apply[P, T, _on_[T, P] <: T on P](v: T _on_ P): T from P = erased
+  def apply[P, T, _on_[T, P] <: T on P](v: T _on_ P): T placed P = erased
 
 trait Call[Q, placed[_, _]]:
   infix def call[P, R, T, _on_[T, P] <: T on P](v: T _on_ R)(using
