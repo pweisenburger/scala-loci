@@ -80,16 +80,25 @@ trait Commons:
     val marshallableUnit = '{ transmitter.Marshallable.unit }.symbol
     val marshallableNull = '{ transmitter.Marshallable.`null` }.symbol
     val marshallableNothing = '{ transmitter.Marshallable.nothing }.symbol
+    val marshal = '{ ?[transmitter.Marshallable[?, ?, ?]].marshal(?, ?) }.symbol
+    val unmarshal = '{ ?[transmitter.Marshallable[?, ?, ?]].unmarshal(?[MessageBuffer], ?) }.symbol
     val transmission = TypeRepr.of[language.transmitter.Transmission.type].typeSymbol
     val placedValue = TypeRepr.of[loci.runtime.PlacedValue[?, ?, ?, ?]].typeSymbol
+    val placedValueSignature = '{ ?[loci.runtime.PlacedValue[?, ?, ?, ?]].signature }.symbol
+    val placedValueArguments = '{ ?[loci.runtime.PlacedValue[?, ?, ?, ?]].arguments }.symbol
+    val placedValueResult = '{ ?[loci.runtime.PlacedValue[?, ?, ?, ?]].result }.symbol
+    val valueSignatureName = '{ ?[loci.runtime.Value.Signature].name }.symbol
     val valueSignaturePath = '{ ?[loci.runtime.Value.Signature].path }.symbol
     val valueSignature = '{ loci.runtime.Value.Signature.apply(?, ?, ?) }.symbol
     val peerSignature = '{ loci.runtime.Peer.Signature.apply(?, ?, ?) }.symbol
+    val peerSignatureCompare = '{ ?[loci.runtime.Peer.Signature] <= ? }.symbol
     val peerTieSingle = '{ loci.runtime.Peer.Tie.Single }.symbol
     val peerTieOptional = '{ loci.runtime.Peer.Tie.Optional }.symbol
     val peerTieMultiple = '{ loci.runtime.Peer.Tie.Multiple }.symbol
     val moduleSignature = '{ loci.runtime.Module.Signature.apply(?[String]) }.symbol
     val moduleSignatureNested = '{ loci.runtime.Module.Signature.apply(?[loci.runtime.Module.Signature], ?[String]) }.symbol
+    val valueReferenceRemote = '{ ?[loci.runtime.Value.Reference].remote }.symbol
+    val remoteReferenceSignature = '{ ?[loci.runtime.Remote.Reference].signature }.symbol
     val invokeRemoteAccess = '{ ?[loci.runtime.System].invokeRemoteAccess(?, ?, ?, ?, ?) }.symbol
     val subjectiveValue = '{ ?[loci.runtime.System].subjectiveValue(?, ?) }.symbol
     val remoteValue = '{ loci.runtime.RemoteValue.apply() }.symbol
@@ -104,9 +113,12 @@ trait Commons:
     val contextFunction1Apply = '{ ?[ContextFunction1[?, ?]].apply(using ?) }.symbol
     val iterableMap = '{ ?[Iterable[?]].map(?) }.symbol
     val iterableNonEmpty = '{ ?[Iterable[?]].nonEmpty }.symbol
+    val tryMap = '{ ?[util.Try[?]].map(?) }.symbol
+    val tryFlatten = '{ ?[util.Try[?]].flatten(using ?) }.symbol
     val seq = TypeRepr.of[Seq[?]].typeSymbol
     val list = TypeRepr.of[List[?]].typeSymbol
     val map = TypeRepr.of[Map[?, ?]].typeSymbol
+    val `try` = TypeRepr.of[util.Try[?]].typeSymbol
     val future = TypeRepr.of[concurrent.Future[?]].typeSymbol
     val contextResultCount = TypeRepr.of[annotation.internal.ContextResultCount].typeSymbol
     val threadUnsafe = TypeRepr.of[annotation.threadUnsafe].typeSymbol
@@ -124,6 +136,7 @@ trait Commons:
     val single = TypeRepr.of[Tie.Single]
     val optional = TypeRepr.of[Tie.Optional]
     val multiple = TypeRepr.of[Tie.Multiple]
+    val messageBuffer = TypeRepr.of[MessageBuffer]
     val placedValue = TypeRepr.of[PlacedValue[?, ?]]
     val placed = TypeRepr.of[Placed[?, ?]]
     val subjective = TypeRepr.of[Placed.Subjective[?, ?]]
@@ -136,6 +149,7 @@ trait Commons:
     val transmission = TypeRepr.of[language.transmitter.Transmission[?, ?, ?, ?, ?]]
     val placedValues = TypeRepr.of[loci.runtime.PlacedValues]
     val valueSignature = TypeRepr.of[loci.runtime.Value.Signature]
+    val valueReference = TypeRepr.of[loci.runtime.Value.Reference]
     val peerSignature = TypeRepr.of[loci.runtime.Peer.Signature]
     val peerTie = TypeRepr.of[loci.runtime.Peer.Tie]
     val moduleSignature = TypeRepr.of[loci.runtime.Module.Signature]
@@ -149,15 +163,17 @@ trait Commons:
     val from = "from"
     val to = "to"
     val anon = "$anon"
-    val system = "$loci$sys"
-    val systemCreate = "$loci$sys$create"
-    val module = "$loci$mod"
-    val signature = "$loci$sig"
-    val peerSignature = "$loci$peer$sig$"
-    val peerTies = "$loci$peer$ties$"
-    val block = "$loci$anon$"
-    val placed = "$loci$placed$"
-    val marshalling = "$loci$marshalling$"
+    val loci = "$loci$"
+    val system = s"${loci}sys"
+    val systemCreate = s"${loci}sys$$create"
+    val dispatch = s"${loci}dispatch"
+    val module = s"${loci}mod"
+    val signature = s"${loci}sig"
+    val peerSignature = s"${loci}peer$$sig$$"
+    val peerTies = s"${loci}peer$$ties$$"
+    val block = s"${loci}anon$$"
+    val placed = s"${loci}placed$$"
+    val marshalling = s"${loci}marshalling$$"
     val resolutionFailure = "resolutionFailure"
 
   object Tuple extends TupleExtractor(quotes)

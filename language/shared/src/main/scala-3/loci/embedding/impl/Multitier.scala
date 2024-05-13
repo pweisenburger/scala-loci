@@ -30,7 +30,8 @@ object Multitier:
       RemoteAccessorSynthesis,
       PlacedValueSplitting,
       RemoteAccessorGeneration,
-      Invocation
+      Invocation,
+      Dispatch
 
     import processor.*
 
@@ -42,7 +43,8 @@ object Multitier:
     val processingPhases = List(
       split,
       materializeAccessors,
-      rewireInvocations)
+      rewireInvocations,
+      generateDispatching)
 
     class Preprocessor extends SafeTreeMap(quotes):
       def trySwapMultitierAnnotation(symbol: Symbol) =

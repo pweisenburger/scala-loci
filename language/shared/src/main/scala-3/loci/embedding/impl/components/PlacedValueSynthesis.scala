@@ -18,16 +18,16 @@ trait PlacedValueSynthesis:
   this: Component & Commons & Annotations & SymbolTrees & Placements & Peers =>
   import quotes.reflect.*
 
-  case class SynthesizedPlacedValues(symbol: Symbol, parents: List[TypeRepr])
+  case class SynthesizedPlacedValues(symbol: Symbol, module: Symbol, peer: Symbol, parents: List[TypeRepr])
   case class SynthesizedDefinitions(original: Symbol, binding: Symbol, init: Option[Symbol], impls: List[Symbol])
   case class SynthesizedStatements(binding: Symbol, impls: List[Symbol])
 
   private val synthesizedDefinitionsCache = PlacedValueSynthesis.synthesizedDefinitionsCache match
     case cache: mutable.Map[Symbol, SynthesizedDefinitions] @unchecked => cache
   private val synthesizedStatementsCache = PlacedValueSynthesis.synthesizedStatementsCache match
-    case cache: mutable.Map[(Symbol, Symbol, Int), Option[SynthesizedStatements]] @unchecked => cache
+    case cache: mutable.Map[(Symbol, Symbol, Int) | Symbol, Option[SynthesizedStatements]] @unchecked => cache
   private val synthesizedPlacedValuesCache = PlacedValueSynthesis.synthesizedPlacedValuesCache match
-    case cache: mutable.Map[(Symbol, Symbol), SynthesizedPlacedValues] @unchecked => cache
+    case cache: mutable.Map[(Symbol, Symbol) | Symbol, SynthesizedPlacedValues] @unchecked => cache
 
   private def mangledSymbolName(symbol: Symbol) =
     f"loci$$${s"${implementationForm(symbol)} ${fullName(symbol)}".hashCode}%08x"
@@ -129,6 +129,9 @@ trait PlacedValueSynthesis:
       end definition
 
       synthesizedDefinitionsCache += symbol -> definition
+      synthesizedDefinitionsCache += definition.binding -> definition
+      definition.init foreach { synthesizedDefinitionsCache += _ -> definition }
+      definition.impls foreach { synthesizedDefinitionsCache += _ -> definition }
       definition
     })
   })
@@ -144,6 +147,9 @@ trait PlacedValueSynthesis:
       val definition = SynthesizedDefinitions(module, binding, None, List.empty)
       synthesizedDefinitionsCache += symbol -> definition
       synthesizedDefinitionsCache += module -> definition
+      synthesizedDefinitionsCache += definition.binding -> definition
+      definition.init foreach { synthesizedDefinitionsCache += _ -> definition }
+      definition.impls foreach { synthesizedDefinitionsCache += _ -> definition }
       definition
     })
   })
@@ -158,6 +164,9 @@ trait PlacedValueSynthesis:
         None
     else
       None
+
+  def synthesizedStatement(symbol: Symbol): Option[SynthesizedStatements] =
+    synthesizedStatementsCache.get(symbol).flatten
 
   def synthesizedStatement(module: Symbol, peer: Symbol, index: Int): Option[SynthesizedStatements] =
     synthesizedStatementsCache.getOrElse((module, peer, index), {
@@ -176,12 +185,17 @@ trait PlacedValueSynthesis:
 
           val statement = Some(SynthesizedStatements(binding, List(impl)))
           synthesizedStatementsCache += (module, peer, index) -> statement
+          synthesizedDefinitionsCache += binding -> statement
+          synthesizedDefinitionsCache += impl -> statement
           statement
         })
       else
         synthesizedStatementsCache += (module, peer, index) -> None
         None
     })
+
+  def synthesizedPlacedValues(symbol: Symbol): Option[SynthesizedPlacedValues] =
+    synthesizedPlacedValuesCache.get(symbol)
 
   def synthesizedPlacedValues(module: Symbol, peer: Symbol): SynthesizedPlacedValues =
     synthesizedPlacedValuesCache.getOrElse((module, peer), {
@@ -223,7 +237,9 @@ trait PlacedValueSynthesis:
           if peer == defn.AnyClass then mangledName else s"$mangledName$$${peer.name}",
           parents,
           noInits = peer != defn.AnyClass): symbol =>
-            synthesizedPlacedValuesCache += (module, peer) -> SynthesizedPlacedValues(symbol, parents)
+            val placedValues = SynthesizedPlacedValues(symbol, module, peer, parents)
+            synthesizedPlacedValuesCache += (module, peer) -> placedValues
+            synthesizedPlacedValuesCache += symbol -> placedValues
 
             inline def collectDeclarations(impls: List[Symbol]) =
               impls collect { case impl if impl.owner == symbol => impl }
@@ -277,7 +293,7 @@ trait PlacedValueSynthesis:
           val tpe = MethodType(names)(_ => tpes, _ => symbol.typeRef)
           SymbolMutator.getOrErrorAndAbort.setInfo(symbol.primaryConstructor, tpe)
 
-        SynthesizedPlacedValues(symbol, parents)
+        SynthesizedPlacedValues(symbol, module, peer, parents)
       })
     })
 end PlacedValueSynthesis
