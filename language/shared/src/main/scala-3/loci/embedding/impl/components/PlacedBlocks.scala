@@ -158,7 +158,9 @@ trait PlacedBlocks:
           val coercedExpr =
             if access.isEmpty then
               if subjective then
-                def tpe(name: String) = MethodType(List(name))(_ => List(symbols.remote.typeRef.appliedTo(local)), _ => TypeRepr.of[Unit])
+                def tpe(name: String) =
+                  MethodType(List(name))(_ => List(symbols.remote.typeRef.appliedTo(local)), _ => TypeRepr.of[Unit])
+
                 expr match
                   case _ if expr.tpe <:< TypeRepr.of[? => Unit] =>
                     expr

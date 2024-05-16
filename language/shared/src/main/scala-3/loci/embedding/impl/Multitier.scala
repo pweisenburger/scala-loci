@@ -105,12 +105,13 @@ object Multitier:
       case _: ClassDef =>
         if !(tree.symbol.owner hasAncestor isMultitierModule) then
           object preprocessor extends Preprocessor
-          val preprocessed @ ClassDef(_, _, _, _, _) = preprocessor.transformStatement(tree)(tree.symbol.owner): @unchecked
+          val preprocessed = preprocessor.transformSubTrees(List(tree))(tree.symbol.owner).head
 
           object processor extends Processor(canceled)
-          val processed @ ClassDef(_, _, _, _, _) = processor.transformStatement(preprocessed)(tree.symbol.owner): @unchecked
+          val processed = processor.transformSubTrees(List(preprocessed))(tree.symbol.owner).head
 
           reportErrors(abortOnErrors = true)
+          println(processed.show)
           List(processed)
         else
           List(tree)

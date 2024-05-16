@@ -24,12 +24,21 @@ trait AccessPath:
     multitierOuterAccess(from, This(synthesizedPlacedValues(from, peer).symbol))
   end multitierOuterAccess
 
+  private def multitierAccessSymbol(symbol: Symbol, from: Symbol, peer: Symbol): Option[Term] =
+    if isMultitierModule(symbol) && (from hasAncestor symbol) then
+      multitierOuterAccess(from, symbol, peer)
+    else if isMultitierNestedPath(symbol) then
+      synthesizedDefinitions(symbol) flatMap: definition =>
+        multitierAccessPath(This(symbol.owner), from, peer) map { _.select(definition.binding) }
+    else
+      None
+
   def multitierAccessPath(path: Term, from: Symbol, peer: Symbol): Option[Term] =
     termAsSelection(path, from) getOrElse path match
-      case Ident(_) if isMultitierModule(path.symbol) && (from hasAncestor path.symbol.moduleClass) =>
-        multitierOuterAccess(from, path.symbol.moduleClass, peer)
-      case This(_) if isMultitierModule(path.symbol) && (from hasAncestor path.symbol) =>
-        multitierOuterAccess(from, path.symbol, peer)
+      case Ident(_) =>
+        multitierAccessSymbol(path.symbol.moduleClass, from, peer)
+      case This(_) =>
+        multitierAccessSymbol(path.symbol, from, peer)
       case Super(qualifier @ This(_), identifier) if qualifier.symbol == from =>
         val thisReference = This(synthesizedPlacedValues(from, peer).symbol)
         identifier.fold(Some(Super(thisReference, None))): identifier =>

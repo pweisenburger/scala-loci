@@ -224,7 +224,7 @@ trait Invocation:
         Option.when(!canceled) { (placementInfo, expr, arguments) }
 
       case _ =>
-        errorAndCancel("Unexpected shape of placed value", value.posInUserCode.startPosition)
+        errorAndCancel("Unexpected shape of placed value.", value.posInUserCode.startPosition)
         None
   end destructPlacedValueAccess
 
@@ -490,11 +490,10 @@ trait Invocation:
 
               // non-placed values in multitier modules
               case _ =>
-                val multitierNestedPath = term match
-                  case This(_) | Super(_, _) => false
-                  case _ => term.symbol.exists && isMultitierNestedPath(term.symbol.maybeOwner)
-
                 if PlacementInfo(term.tpe.widenTermRefByName.resultType).isEmpty then
+                  val multitierNestedPath = term match
+                    case This(_) | Super(_, _) => false
+                    case _ => term.symbol.exists && !term.symbol.isClassConstructor && isMultitierNestedPath(term.symbol.maybeOwner)
                   transformTermSkippingExpectedPlacedValues(peerAccessPath(term, multitierNestedPath) getOrElse term)(owner)
                 else
                   transformTermSkippingExpectedPlacedValues(term)(owner)
@@ -533,7 +532,6 @@ trait Invocation:
       end transformStatement
     end invocationRewriter
 
-    invocationRewriter.transformStatement(module)(module.symbol.owner) match
-      case module: ClassDef @unchecked => module
+    invocationRewriter.transformSubTrees(List(module))(module.symbol.owner).head
   end rewireInvocations
 end Invocation
