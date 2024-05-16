@@ -25,11 +25,9 @@ class System(
     values: PlacedValues,
     main: Option[() => Unit],
     separateMainThread: Boolean,
-    ties: Map[Peer.Signature, Peer.Tie],
     executionContext: ExecutionContext,
     remoteConnections: RemoteConnections,
-    singleConnectedRemotes: Seq[Remote.Reference],
-    connectingRemotes: Seq[Notice.Steady[Try[Remote.Reference]]]) {
+    singleConnectedRemotes: Seq[Remote.Reference]) {
 
   private implicit val context: ExecutionContext = executionContext
 
@@ -79,6 +77,10 @@ class System(
   def running: Boolean = !remoteConnections.isTerminated
 
   def terminate(): Unit = remoteConnections.terminate()
+
+  def peer: Peer.Signature = remoteConnections.peer
+
+  def ties: Map[Peer.Signature, Peer.Tie] = remoteConnections.ties
 
 
 

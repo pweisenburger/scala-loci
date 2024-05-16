@@ -15,12 +15,10 @@ class MacroExpansionJVMSpec extends AnyFlatSpec with Matchers {
     peer,
     None,
     false,
-    Map.empty,
     contexts.Immediate.global,
     new runtime.RemoteConnections(
       runtime.Peer.Signature("", List.empty, runtime.Module.Signature("", List.empty)),
       Map.empty),
-    Seq.empty,
     Seq.empty)
 
   it should "correctly compile remote blocks" in {

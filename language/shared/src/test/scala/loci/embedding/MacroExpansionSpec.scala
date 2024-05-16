@@ -213,12 +213,10 @@ class MacroExpansionSpec extends AnyFlatSpec with Matchers with NoLogging {
     peer,
     None,
     false,
-    Map.empty,
     contexts.Immediate.global,
     new runtime.RemoteConnections(
       runtime.Peer.Signature("", List.empty, runtime.Module.Signature("", List.empty)),
       Map.empty),
-    Seq.empty,
     Seq.empty)
 
   it should "typecheck nested objects of the name as the module" in {

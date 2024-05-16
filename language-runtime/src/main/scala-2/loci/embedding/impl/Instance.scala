@@ -390,7 +390,7 @@ class Instance(val c: blackbox.Context) {
         val system =
           q"""${Flag.SYNTHETIC} protected def $$loci$$sys$$create = new ${types.system}(
              this, $main, $separateMainThread,
-             $$loci$$ties, $$loci$$context, $$loci$$connections, $$loci$$connected, $$loci$$connecting)"""
+             $$loci$$context, $$loci$$connections, $$loci$$connected)"""
 
         val tree = transformer transform q"""
           ..$namedArgs
@@ -399,7 +399,7 @@ class Instance(val c: blackbox.Context) {
             $prefix.$ties,
             $context,
             $connect.setup($prefix.$signature, $prefix.$ties.keys.flatMap(_.bases).toList),
-            ($$loci$$ties, $$loci$$context, $$loci$$connections, $$loci$$connected, $$loci$$connecting) => {
+            ($$loci$$context, $$loci$$connections, $$loci$$connected) => {
               val $$loci$$module: $prefix.type = $prefix
               val $$loci$$instance =
                 new { ..$earlyDefinitions } with $prefix.$peer { $$loci$$outer =>

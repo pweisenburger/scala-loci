@@ -10,7 +10,7 @@ import java.util.concurrent.atomic.AtomicLong
 import scala.collection.mutable
 import scala.util.{Failure, Success, Try}
 
-class RemoteConnections(peer: Peer.Signature, ties: Map[Peer.Signature, Peer.Tie])
+class RemoteConnections(val peer: Peer.Signature, val ties: Map[Peer.Signature, Peer.Tie])
   extends ConnectionsBase[Remote.Reference, Message[Method]] {
 
   protected def deserializeMessage(message: MessageBuffer) = {
