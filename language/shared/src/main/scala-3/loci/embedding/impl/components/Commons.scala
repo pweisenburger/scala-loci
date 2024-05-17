@@ -88,6 +88,7 @@ trait Commons:
     val placedValueArguments = '{ ?[loci.runtime.PlacedValue[?, ?, ?, ?]].arguments }.symbol
     val placedValueResult = '{ ?[loci.runtime.PlacedValue[?, ?, ?, ?]].result }.symbol
     val valueSignatureName = '{ ?[loci.runtime.Value.Signature].name }.symbol
+    val valueSignatureModule = '{ ?[loci.runtime.Value.Signature].module }.symbol
     val valueSignaturePath = '{ ?[loci.runtime.Value.Signature].path }.symbol
     val valueSignature = '{ loci.runtime.Value.Signature.apply(?, ?, ?) }.symbol
     val peerSignature = '{ loci.runtime.Peer.Signature.apply(?, ?, ?) }.symbol
@@ -112,7 +113,10 @@ trait Commons:
     val contextFunction1 = TypeRepr.of[ContextFunction1[?, ?]].typeSymbol
     val contextFunction1Apply = '{ ?[ContextFunction1[?, ?]].apply(using ?) }.symbol
     val iterableMap = '{ ?[Iterable[?]].map(?) }.symbol
+    val iterableIsEmpty = '{ ?[Iterable[?]].isEmpty }.symbol
     val iterableNonEmpty = '{ ?[Iterable[?]].nonEmpty }.symbol
+    val listHead = '{ ?[List[?]].head }.symbol
+    val listTail = '{ ?[List[?]].tail }.symbol
     val tryMap = '{ ?[util.Try[?]].map(?) }.symbol
     val tryFlatten = '{ ?[util.Try[?]].flatten(using ?) }.symbol
     val seq = TypeRepr.of[Seq[?]].typeSymbol
