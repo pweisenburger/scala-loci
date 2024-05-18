@@ -401,8 +401,8 @@ trait RemoteAccessorSynthesis:
      peerSignatures.to(SeqMap))
   end signatures
 
-  private def synthesizeAllPlacedAccessors(module: Symbol, includeFirst: Boolean): Map[Int | Symbol, Symbol] =
-    val baseClasses = module.typeRef.baseClasses
+  private def synthesizeAllPlacedAccessors(symbol: Symbol, includeFirst: Boolean): Map[Int | Symbol, Symbol] =
+    val baseClasses = symbol.typeRef.baseClasses
     val placedTail = baseClasses.tail.reverseIterator flatMap: base =>
       if isMultitierModule(base) then
         synthesizeAccessors(base).placed.iterator flatMap:
@@ -418,20 +418,31 @@ trait RemoteAccessorSynthesis:
         Iterator.empty
     (placedTail ++ placedHead).toMap
 
-  def synthesizeAllPlacedAccessors(module: Symbol): Map[Int | Symbol, Symbol] =
-    synthesizeAllPlacedAccessors(module, includeFirst = true)
+  def synthesizeAllPlacedAccessors(symbol: Symbol): Map[Int | Symbol, Symbol] =
+    synthesizeAllPlacedAccessors(symbol, includeFirst = true)
 
-  def synthesizeAllPeerSignatures(module: Symbol): Map[Symbol, Symbol] =
-    (synthesizeAccessors(module).peers.view.mapValues { (signature, _ , _, _) => signature }).toMap
+  def synthesizeAllPeerSignatures(symbol: Symbol): Map[Symbol, Symbol] =
+    (synthesizeAccessors(symbol).peers.view.mapValues { (signature, _ , _, _) => signature }).toMap
 
-  def synthesizeAccessors(module: Symbol): Accessors = synthesizedAccessorsCache.getOrElseUpdate(module, {
-    val tree =
-      try module.tree
-      catch case NonFatal(_) => Literal(NullConstant())
-    tree match
-      case tree: ClassDef => synthesizeAccessorsFromTree(module, tree)
-      case _ => synthesizeAccessorsFromClass(module, classFileName(tree.symbol))
-  })
+  def synthesizeAccessors(symbol: Symbol): Accessors =
+    val module = if symbol.moduleClass.exists then symbol.moduleClass else symbol
+
+    synthesizedAccessorsCache.getOrElseUpdate(module, {
+      val tree =
+        try module.tree
+        catch case NonFatal(_) => Literal(NullConstant())
+
+      val accessors =
+        tree match
+          case tree: ClassDef => synthesizeAccessorsFromTree(module, tree)
+          case _ => synthesizeAccessorsFromClass(module, classFileName(tree.symbol))
+
+      if module.isModuleDef then
+        synthesizedAccessorsCache += module.companionModule -> accessors
+
+      accessors
+    })
+  end synthesizeAccessors
 
   private def synthesizeAccessorsFromTree(module: Symbol, tree: ClassDef): Accessors =
     val mangledName = mangledSymbolName(module)

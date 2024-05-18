@@ -247,9 +247,9 @@ trait Invocation:
             Some(Multiplicity.Multiple)
           case _ =>
             localPeerInfo.ties.foldLeft(Option.empty[Multiplicity]):
-              case (multiplicity, (remote, m)) =>
-                if remote =:= remote && (multiplicity forall { _.ordinal > m.ordinal }) then Some(m)
-                else if remote <:< remote && multiplicity.isEmpty then Some(Multiplicity.Multiple)
+              case (multiplicity, (tiedRemote, tiedMultiplicity)) =>
+                if tiedRemote =:= remote && (multiplicity forall { _.ordinal > tiedMultiplicity.ordinal }) then Some(tiedMultiplicity)
+                else if tiedRemote <:< remote && multiplicity.isEmpty then Some(Multiplicity.Multiple)
                 else multiplicity
 
         tie match
@@ -286,68 +286,75 @@ trait Invocation:
                 term.posInUserCode.endPosition)
   end checkTieMultiplicities
 
-  def rewireInvocations(module: ClassDef): ClassDef =
-    object invocationRewriter extends SafeTreeMap(quotes):
-      private val modules = mutable.Stack.empty[Symbol]
-      private val peersTypes = mutable.Stack.empty[TypeRepr]
-      private val placedValues = mutable.Stack.empty[Map[Symbol, TypeRepr]]
+  private object invocationRewriter extends SafeTreeMap(quotes):
+    private val modules = mutable.Stack.empty[Symbol]
+    private val peersTypes = mutable.Stack.empty[TypeRepr]
+    private val placedValues = mutable.Stack.empty[Map[Symbol, TypeRepr]]
 
-      extension [S](stack: mutable.Stack[S]) private def runStacked[T](value: Option[S])(body: => T) =
-        value.fold(body): value =>
-          stack.push(value)
-          val result = body
-          stack.pop()
-          result
+    extension [S](stack: mutable.Stack[S]) private def runStacked[T](value: Option[S])(body: => T) =
+      value.fold(body): value =>
+        stack.push(value)
+        val result = body
+        stack.pop()
+        result
 
-      def transformTermSkippingExpectedPlacedValues(term: Term)(owner: Symbol) = term match
-        case term @ Select(PlacedValueReference(_, _), _) if term.symbol.owner == symbols.placed =>
-          Select.copy(term)(super.transformTerm(term.qualifier)(owner), term.name)
+    def transformTermSkippingExpectedPlacedValues(term: Term)(owner: Symbol) = term match
+      case term @ Select(PlacedValueReference(_, _), _) if term.symbol.owner == symbols.placed =>
+        Select.copy(term)(super.transformTerm(term.qualifier)(owner), term.name)
 
-        case term @ Apply(_, _) =>
-          val fun = transformTerm(term.fun)(owner)
-          val args = clearTypeApplications(term.fun).tpe match
-            case MethodType(_, paramTypes, _) =>
-              paramTypes zip term.args map: (tpe, arg) =>
-                if !(tpe =:= TypeRepr.of[Nothing]) && tpe <:< types.placedValue then
-                  super.transformTerm(arg)(owner)
+      case term @ Apply(_, _) =>
+        val fun = transformTerm(term.fun)(owner)
+        val args = clearTypeApplications(term.fun).tpe match
+          case MethodType(_, paramTypes, _) =>
+            paramTypes zip term.args map: (tpe, arg) =>
+              if !(tpe =:= TypeRepr.of[Nothing]) && tpe <:< types.placedValue then
+                super.transformTerm(arg)(owner)
+              else
+                transformTerm(arg)(owner)
+          case _ =>
+            transformTerms(term.args)(owner)
+        Apply.copy(term)(fun, args)
+
+      case _ =>
+        super.transformTerm(term)(owner)
+    end transformTermSkippingExpectedPlacedValues
+
+    override def transformTerm(term: Term)(owner: Symbol) =
+      if !canceled then
+        val module = modules.head
+
+        peersTypes.headOption.fold(super.transformTerm(term)(owner)): peerType =>
+          def peerAccessPath(term: Term, necessarilyPlaced: Boolean) =
+            val path = termAsSelection(term, module) flatMap { accessPath(_, module, peerType.typeSymbol) }
+            if necessarilyPlaced && path.isEmpty then
+              errorAndCancel("Unexpected shape of placed value.", term.posInUserCode.endPosition)
+            path
+
+          def remoteAccessArguments(remote: TypeRepr, reference: Term, arguments: List[Term]) =
+            if !canceled && peerAccessPath(reference, necessarilyPlaced = true).nonEmpty then
+              val key =
+                if (reference.symbol.flags is Flags.Synthetic) && (reference.symbol.name startsWith names.block) then
+                  try reference.symbol.name.drop(names.block.length).toInt
+                  catch case _: NumberFormatException => reference.symbol
                 else
-                  transformTerm(arg)(owner)
-            case _ =>
-              transformTerms(term.args)(owner)
-          Apply.copy(term)(fun, args)
+                  reference.symbol
 
-        case _ =>
-          super.transformTerm(term)(owner)
-      end transformTermSkippingExpectedPlacedValues
+              val path = termAsSelection(reference, module) match
+                case Some(reference) =>
+                  Some(reference.qualifier)
+                case _ =>
+                  errorAndCancel("Unexpected shape of placed value.", reference.posInUserCode.startPosition)
+                  None
 
-      override def transformTerm(term: Term)(owner: Symbol) =
-        if !canceled then
-          val module = modules.head
-
-          peersTypes.headOption.fold(super.transformTerm(term)(owner)): peerType =>
-            def peerAccessPath(term: Term, necessarilyPlaced: Boolean) =
-              val path = termAsSelection(term, module) flatMap { accessPath(_, module, peerType.typeSymbol) }
-              if necessarilyPlaced && path.isEmpty then
-                errorAndCancel("Unexpected shape of placed value", term.posInUserCode.endPosition)
-              path
-
-            def remoteAccessArguments(remote: TypeRepr, reference: Term, arguments: List[Term]) =
-              if !canceled && peerAccessPath(reference, necessarilyPlaced = true).nonEmpty then
-                val key =
-                  if (reference.symbol.flags is Flags.Synthetic) && (reference.symbol.name startsWith names.block) then
-                    try reference.symbol.name.drop(names.block.length).toInt
-                    catch case _: NumberFormatException => reference.symbol
-                  else
-                    reference.symbol
-
-                synthesizeAllPlacedAccessors(module).get(key) match
+              path flatMap: path =>
+                synthesizeAllPlacedAccessors(path.symbol).get(key) match
                   case Some(placed) =>
-                    synthesizeAllPeerSignatures(module).get(remote.typeSymbol) match
+                    synthesizeAllPeerSignatures(path.symbol).get(remote.typeSymbol) match
                       case Some(signature) =>
                         Some(
                           Select.unique(This(synthesizedPlacedValues(module, peerType.typeSymbol).symbol), names.system),
-                          This(module).select(placed),
-                          This(module).select(signature),
+                          path.select(placed),
+                          path.select(signature),
                           if arguments.isEmpty then Literal(UnitConstant())
                           else if arguments.sizeIs == 1 then arguments.head
                           else Tuple(arguments map { transformTerm(_)(owner) }))
@@ -359,179 +366,180 @@ trait Invocation:
                     None
               else
                 None
+          end remoteAccessArguments
 
-            term match
-              // remote access to placed values of other peer instances using accessor syntax (possibly combined with remote procedure syntax)
-              case PlacedAccessRetrieval(expr, arg, typeApplies, apply, prefix, transmission, suffix, select, name) =>
-                val List(v, r, t, l, m) = transmission.tpe.widenTermRefByName.dealias.typeArgs: @unchecked
+          term match
+            // remote access to placed values of other peer instances using accessor syntax (possibly combined with remote procedure syntax)
+            case PlacedAccessRetrieval(expr, arg, typeApplies, apply, prefix, transmission, suffix, select, name) =>
+              val List(v, r, t, l, m) = transmission.tpe.widenTermRefByName.dealias.typeArgs: @unchecked
 
-                val (value, selection, call) = arg match
-                  case Call(value, selection) => (value, selection, true)
-                  case Selection(value, selection) => (value, selection, false)
-                  case _ => (arg, None, false)
+              val (value, selection, call) = arg match
+                case Call(value, selection) => (value, selection, true)
+                case Selection(value, selection) => (value, selection, false)
+                case _ => (arg, None, false)
 
-                val selectionMode = SelectionMode(selection)(owner)
-                val access = destructPlacedValueAccess(term, value, peerType, selectionMode, Some(l, r, name), call)
+              val selectionMode = SelectionMode(selection)(owner)
+              val access = destructPlacedValueAccess(term, value, peerType, selectionMode, Some(l, r, name), call)
 
-                val result =
-                  access flatMap: (_, reference, arguments) =>
-                    checkTieMultiplicities(term, l, r, selectionMode, Some(m), call)
+              val result =
+                access flatMap: (_, reference, arguments) =>
+                  checkTieMultiplicities(term, l, r, selectionMode, Some(m), call)
 
-                    remoteAccessArguments(r, reference, arguments) map: (system, placed, signature, arguments) =>
-                      val result =
-                        ValDef.let(owner, "instances", selectionMode.instances): instances =>
-                          val arg = Ref(symbols.remoteValue).appliedToTypes(List(r, v)).appliedToNone
-                          val instanceBased = Literal(BooleanConstant(selectionMode.instanceBased))
-                          val request =
-                            New(TypeIdent(symbols.remoteRequest)).select(symbols.remoteRequest.primaryConstructor)
-                              .appliedToTypes(List(v, r, t, l, m, placed.tpe.widenTermRefByName.dealias.typeArgs.head))
-                              .appliedTo(arguments, placed, signature, instances, instanceBased, system)
+                  remoteAccessArguments(r, reference, arguments) map: (system, placed, signature, arguments) =>
+                    val result =
+                      ValDef.let(owner, "instances", selectionMode.instances): instances =>
+                        val arg = Ref(symbols.remoteValue).appliedToTypes(List(r, v)).appliedToNone
+                        val instanceBased = Literal(BooleanConstant(selectionMode.instanceBased))
+                        val request =
+                          New(TypeIdent(symbols.remoteRequest)).select(symbols.remoteRequest.primaryConstructor)
+                            .appliedToTypes(List(v, r, t, l, m, placed.tpe.widenTermRefByName.dealias.typeArgs.head))
+                            .appliedTo(arguments, placed, signature, instances, instanceBased, system)
 
-                          val access = PlacedAccess(
-                            transformSubTrees(List(expr))(owner).head,
-                            arg,
-                            transformSubTrees(typeApplies)(owner),
-                            apply,
-                            transformTerms(prefix)(owner),
-                            request,
-                            transformTerms(suffix)(owner))
+                        val access = PlacedAccess(
+                          expr,
+                          arg,
+                          transformSubTrees(typeApplies)(owner),
+                          apply,
+                          transformTerms(prefix)(owner),
+                          request,
+                          transformTerms(suffix)(owner))
 
-                          select.fold(access) { access.select(_) }
-                      end result
+                        select.fold(access) { access.select(_) }
+                    end result
 
-                      val Block((valDef: ValDef) :: stats, term) = result: @unchecked
-                      Block.copy(result)(ValDef.copy(valDef)(valDef.name, valDef.tpt, valDef.rhs map { _.changeOwner(valDef.symbol) }) :: stats, term)
-                end result
+                    val Block((valDef: ValDef) :: stats, term) = result: @unchecked
+                    Block.copy(result)(ValDef.copy(valDef)(valDef.name, valDef.tpt, valDef.rhs map { _.changeOwner(valDef.symbol) }) :: stats, term)
+              end result
 
-                result getOrElse super.transformTerm(term)(owner)
+              result getOrElse super.transformTerm(term)(owner)
 
-              // remote access to placed values of other peer instances using remote procedure syntax (without accessor syntax)
-              case Call(value, selection) =>
-                val selectionMode = SelectionMode(selection)(owner)
-                val access = destructPlacedValueAccess(term, value, peerType, selectionMode, retrieval = None, call = true)
+            // remote access to placed values of other peer instances using remote procedure syntax (without accessor syntax)
+            case Call(value, selection) =>
+              val selectionMode = SelectionMode(selection)(owner)
+              val access = destructPlacedValueAccess(term, value, peerType, selectionMode, retrieval = None, call = true)
 
-                val result =
-                  access flatMap : (placementInfo, reference, arguments) =>
-                    val remotePeerType = selectionMode.maybeType getOrElse placementInfo.peerType
-                    checkTieMultiplicities(term, peerType, remotePeerType, selectionMode, tie = None, call = true)
+              val result =
+                access flatMap: (placementInfo, reference, arguments) =>
+                  val remotePeerType = selectionMode.maybeType getOrElse placementInfo.peerType
+                  checkTieMultiplicities(term, peerType, remotePeerType, selectionMode, tie = None, call = true)
 
-                    remoteAccessArguments(remotePeerType, reference, arguments) map: (system, placed, signature, arguments) =>
-                      val result =
-                        ValDef.let(owner, "instances", selectionMode.instances): instances =>
-                          val typeArgs = placed.tpe.widenTermRefByName.dealias.typeArgs
-                          val requestResult = Literal(BooleanConstant(false))
-                          val access =
-                            system.select(symbols.invokeRemoteAccess)
-                              .appliedToTypes(List(typeArgs.head, typeArgs.last))
-                              .appliedTo(arguments, placed, signature, instances, requestResult)
+                  remoteAccessArguments(remotePeerType, reference, arguments) map: (system, placed, signature, arguments) =>
+                    val result =
+                      ValDef.let(owner, "instances", selectionMode.instances): instances =>
+                        val typeArgs = placed.tpe.widenTermRefByName.dealias.typeArgs
+                        val requestResult = Literal(BooleanConstant(false))
+                        val access =
+                          system.select(symbols.invokeRemoteAccess)
+                            .appliedToTypes(List(typeArgs.head, typeArgs.last))
+                            .appliedTo(arguments, placed, signature, instances, requestResult)
 
-                          if selectionMode.instanceBased then
-                            If(instances.select(symbols.iterableNonEmpty), Block(List(access), Literal(UnitConstant())), Literal(UnitConstant()))
-                          else
-                            access
-                      end result
+                        if selectionMode.instanceBased then
+                          If(instances.select(symbols.iterableNonEmpty), Block(List(access), Literal(UnitConstant())), Literal(UnitConstant()))
+                        else
+                          access
+                    end result
 
-                      val Block((valDef: ValDef) :: stats, term) = result: @unchecked
-                      Block.copy(result)(ValDef.copy(valDef)(valDef.name, valDef.tpt, valDef.rhs map { _.changeOwner(valDef.symbol) }) :: stats, term)
-                end result
+                    val Block((valDef: ValDef) :: stats, term) = result: @unchecked
+                    Block.copy(result)(ValDef.copy(valDef)(valDef.name, valDef.tpt, valDef.rhs map { _.changeOwner(valDef.symbol) }) :: stats, term)
+              end result
 
-                result getOrElse super.transformTerm(term)(owner)
+              result getOrElse super.transformTerm(term)(owner)
 
-              // local access to subjective placed values
-              case SubjectiveLocalAccess(expr, reference, placementInfo, remote) =>
-                val transformedExpr = transformTerm(expr)(owner)
-                val transformedRemote = transformTerm(remote)(owner)
+            // local access to subjective placed values
+            case SubjectiveLocalAccess(expr, reference, placementInfo, remote) =>
+              val transformedExpr = transformTerm(expr)(owner)
+              val transformedRemote = transformTerm(remote)(owner)
 
-                placementInfo.modality.subjectivePeerType.fold(transformedExpr): subjective =>
-                  val instance =
-                    if !(transformedRemote.tpe derivesFrom symbols.remote) then
-                      Some("another")
-                    else
-                      val remote = transformedRemote.tpe.baseType(symbols.remote).typeArgs.head
-                      if !(remote <:< subjective) then
-                        Some(remote.safeShow(Printer.SafeTypeReprShortCode))
-                      else
-                        None
-
-                  instance match
-                    case Some(instance) =>
-                      errorAndCancel(
-                        s"Value that is subjectively dispatched to ${subjective.safeShow(Printer.SafeTypeReprShortCode)} peer " +
-                        s"cannot be invoked for $instance peer instance.",
-                        term.posInUserCode.startPosition)
-                      term
-                    case _ =>
-                      if isStablePath(reference) then
-                        Select.unique(This(synthesizedPlacedValues(module, peerType.typeSymbol).symbol), names.system)
-                          .select(symbols.subjectiveValue)
-                          .appliedToTypes(List(placementInfo.valueType, subjective))
-                          .appliedTo(transformedExpr, transformedRemote)
-                      else
-                        transformedExpr.select(symbols.function1Apply).appliedTo(transformedRemote)
-
-              // placed values on the same peer
-              case PlacedValueReference(reference, placementInfo) =>
-                val expr = insideApplications(reference): term =>
-                  if !(peerType <:< placementInfo.peerType) then
-                    val value =
-                      if !(term.symbol.flags is Flags.Synthetic) && !(term.symbol.flags is Flags.Artifact) then
-                        s"value ${name(term.symbol)}"
-                      else
-                        "value"
-                    errorAndCancel(
-                      s"Access to $value on ${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)} peer not allowed " +
-                      s"on ${peerType.safeShow(Printer.SafeTypeReprShortCode)} peer.",
-                      reference.posInUserCode.startPosition)
-                    None
+              placementInfo.modality.subjectivePeerType.fold(transformedExpr): subjective =>
+                val instance =
+                  if !(transformedRemote.tpe derivesFrom symbols.remote) then
+                    Some("another")
                   else
-                    peerAccessPath(term, necessarilyPlaced = true)
+                    val remote = transformedRemote.tpe.baseType(symbols.remote).typeArgs.head
+                    if !(remote <:< subjective) then
+                      Some(remote.safeShow(Printer.SafeTypeReprShortCode))
+                    else
+                      None
 
-                transformTermSkippingExpectedPlacedValues(expr getOrElse term)(owner)
+                instance match
+                  case Some(instance) =>
+                    errorAndCancel(
+                      s"Value that is subjectively dispatched to ${subjective.safeShow(Printer.SafeTypeReprShortCode)} peer " +
+                      s"cannot be invoked for $instance peer instance.",
+                      term.posInUserCode.startPosition)
+                    term
+                  case _ =>
+                    if isStablePath(reference) then
+                      Select.unique(This(synthesizedPlacedValues(module, peerType.typeSymbol).symbol), names.system)
+                        .select(symbols.subjectiveValue)
+                        .appliedToTypes(List(placementInfo.valueType, subjective))
+                        .appliedTo(transformedExpr, transformedRemote)
+                    else
+                      transformedExpr.select(symbols.function1Apply).appliedTo(transformedRemote)
 
-              // non-placed values in multitier modules
-              case _ =>
-                if PlacementInfo(term.tpe.widenTermRefByName.resultType).isEmpty then
-                  val multitierNestedPath = term match
-                    case This(_) | Super(_, _) => false
-                    case _ => term.symbol.exists && !term.symbol.isClassConstructor && isMultitierNestedPath(term.symbol.maybeOwner)
-                  transformTermSkippingExpectedPlacedValues(peerAccessPath(term, multitierNestedPath) getOrElse term)(owner)
+            // placed values on the same peer
+            case PlacedValueReference(reference, placementInfo) =>
+              val expr = insideApplications(reference): term =>
+                if !(peerType <:< placementInfo.peerType) then
+                  val value =
+                    if !(term.symbol.flags is Flags.Synthetic) && !(term.symbol.flags is Flags.Artifact) then
+                      s"value ${name(term.symbol)}"
+                    else
+                      "value"
+                  errorAndCancel(
+                    s"Access to $value on ${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)} peer not allowed " +
+                    s"on ${peerType.safeShow(Printer.SafeTypeReprShortCode)} peer.",
+                    reference.posInUserCode.startPosition)
+                  None
                 else
-                  transformTermSkippingExpectedPlacedValues(term)(owner)
-        else
-          term
-      end transformTerm
+                  peerAccessPath(term, necessarilyPlaced = true)
 
-      override def transformStatement(stat: Statement)(owner: Symbol) = stat match
-        case stat: ClassDef if !canceled =>
-          val symbol = stat.symbol
-          val peerType =
-            placedValues.headOption flatMap { _.get(symbol) } orElse:
-              Option.when(!isMultitierModule(symbol)) { defn.AnyClass.typeRef }
+              transformTermSkippingExpectedPlacedValues(expr getOrElse term)(owner)
 
-          val definitions =
-            if isMultitierModule(symbol) then
-              PeerInfo.ofModule(symbol) map: peerInfo =>
-                synthesizedPlacedValues(symbol, peerInfo.peerType.typeSymbol).symbol -> peerInfo.peerType
-            else
-              List.empty
+            // non-placed values in multitier modules
+            case _ =>
+              if PlacementInfo(term.tpe.widenTermRefByName.resultType).isEmpty then
+                val multitierNestedPath = term match
+                  case This(_) | Super(_, _) => false
+                  case _ => term.symbol.exists && !term.symbol.isClassConstructor && isMultitierNestedPath(term.symbol.maybeOwner)
+                transformTermSkippingExpectedPlacedValues(peerAccessPath(term, multitierNestedPath) getOrElse term)(owner)
+              else
+                transformTermSkippingExpectedPlacedValues(term)(owner)
+      else
+        term
+    end transformTerm
 
-          if !isMultitierModule(symbol) || placedValues.isEmpty then
-            placedValues.runStacked(Some(definitions.toMap)):
-              peersTypes.runStacked(peerType):
-                modules.runStacked(Option.when(isMultitierNestedPath(symbol)) { symbol }):
-                  super.transformStatement(stat)(owner)
+    override def transformStatement(stat: Statement)(owner: Symbol) = stat match
+      case stat: ClassDef if !canceled =>
+        val symbol = stat.symbol
+        val peerType =
+          placedValues.headOption flatMap { _.get(symbol) } orElse:
+            Option.when(!isMultitierModule(symbol)) { defn.AnyClass.typeRef }
+
+        val definitions =
+          if isMultitierModule(symbol) then
+            PeerInfo.ofModule(symbol) map: peerInfo =>
+              synthesizedPlacedValues(symbol, peerInfo.peerType.typeSymbol).symbol -> peerInfo.peerType
           else
-            stat
+            List.empty
 
-        case _ if !canceled =>
-          placedValues.runStacked(Some(Map.empty)):
-            super.transformStatement(stat)(owner)
-
-        case _ =>
+        if !isMultitierModule(symbol) || placedValues.isEmpty then
+          placedValues.runStacked(Some(definitions.toMap)):
+            peersTypes.runStacked(peerType):
+              modules.runStacked(Option.when(isMultitierNestedPath(symbol)) { symbol }):
+                super.transformStatement(stat)(owner)
+        else
           stat
-      end transformStatement
-    end invocationRewriter
 
+      case _ if !canceled =>
+        placedValues.runStacked(Some(Map.empty)):
+          super.transformStatement(stat)(owner)
+
+      case _ =>
+        stat
+    end transformStatement
+  end invocationRewriter
+
+  def rewireInvocations(module: ClassDef): ClassDef =
     invocationRewriter.transformSubTrees(List(module))(module.symbol.owner).head
-  end rewireInvocations
 end Invocation

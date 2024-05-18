@@ -277,11 +277,11 @@ trait Dispatch:
                 signature.select(symbols.valueSignatureName),
                 (valueDispatching map { _(symbol, request, reference) }) :+ default)
 
-              if placedValues.peer == defn.AnyClass then
-                def moduleDispatch = Match(
-                  path.select(symbols.listHead),
-                  (moduleDispatching map { _(request, signature, path.select(symbols.listTail), reference) }) :+ default)
+              def moduleDispatch = Match(
+                path.select(symbols.listHead),
+                (moduleDispatching map { _(request, signature, path.select(symbols.listTail), reference) }) :+ default)
 
+              if placedValues.peer == defn.AnyClass then
                 if valueDispatching.isEmpty then
                   If(emptyPath, fallback, moduleDispatch)
                 else if moduleDispatching.isEmpty then

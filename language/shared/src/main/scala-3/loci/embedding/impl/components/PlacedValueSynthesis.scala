@@ -137,15 +137,15 @@ trait PlacedValueSynthesis:
   })
 
   private def synthesizedModule(symbol: Symbol): SynthesizedDefinitions = synthesizedDefinitionsCache.getOrElse(symbol, {
-    val module = if symbol.isClassDef then symbol else symbol.moduleClass
+    val module = if symbol.moduleClass.exists then symbol.moduleClass else symbol
     val modulePlacedValues = synthesizedPlacedValues(module, defn.AnyClass).symbol
     val ownerPlacedValues = synthesizedPlacedValues(module.owner, defn.AnyClass).symbol
     synthesizedDefinitionsCache.getOrElse(module, {
       val binding = ownerPlacedValues.fieldMember(module.companionModule.name) orElse:
-                                                                                        // Flags.Final | Flags.Lazy | Flags.Module | Flags.StableRealizable
         newVal(ownerPlacedValues, module.companionModule.name, modulePlacedValues.typeRef, Flags.Deferred | Flags.Lazy | Flags.StableRealizable, Symbol.noSymbol)
       val definition = SynthesizedDefinitions(module, binding, None, List.empty)
-      synthesizedDefinitionsCache += symbol -> definition
+      if module.isModuleDef then
+        synthesizedDefinitionsCache += module.companionModule -> definition
       synthesizedDefinitionsCache += module -> definition
       synthesizedDefinitionsCache += definition.binding -> definition
       definition.init foreach { synthesizedDefinitionsCache += _ -> definition }
@@ -197,7 +197,8 @@ trait PlacedValueSynthesis:
   def synthesizedPlacedValues(symbol: Symbol): Option[SynthesizedPlacedValues] =
     synthesizedPlacedValuesCache.get(symbol)
 
-  def synthesizedPlacedValues(module: Symbol, peer: Symbol): SynthesizedPlacedValues =
+  def synthesizedPlacedValues(symbol: Symbol, peer: Symbol): SynthesizedPlacedValues =
+    val module = if symbol.moduleClass.exists then symbol.moduleClass else symbol
     synthesizedPlacedValuesCache.getOrElse((module, peer), {
       val name = fullName(module)
       val mangledName = mangledSymbolName(module)
@@ -238,6 +239,8 @@ trait PlacedValueSynthesis:
           parents,
           noInits = peer != defn.AnyClass): symbol =>
             val placedValues = SynthesizedPlacedValues(symbol, module, peer, parents)
+            if module.isModuleDef then
+              synthesizedPlacedValuesCache += (module.companionModule, peer) -> placedValues
             synthesizedPlacedValuesCache += (module, peer) -> placedValues
             synthesizedPlacedValuesCache += symbol -> placedValues
 
