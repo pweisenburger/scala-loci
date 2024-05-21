@@ -229,7 +229,7 @@ object MultitierPreprocessor:
           New(TypeIdent(compileTimeOnly)).select(compileTimeOnly.primaryConstructor).appliedTo(Literal(StringConstant(message)))
 
         val deferredAnnotation =
-          New(TypeIdent(deferred)).select(compileTimeOnly.primaryConstructor).appliedToNone
+          New(TypeIdent(deferred)).select(deferred.primaryConstructor).appliedToNone
 
         val processedDeclarations = IdentityHashMap[Any, Any]
 
@@ -241,13 +241,14 @@ object MultitierPreprocessor:
             completerOriginalTree(symbol) foreach:
               processTree(decl, multitierAnnottee, compileTimeOnlyAnnotation, _)
 
-            if multitierAnnottee && (flags(decl) is Flags.Module) && (flags(symbol) is Flags.Deferred) then
-              resetFlag.invoke(denot.invoke(symbol, context), Flags.Deferred)
-              if !hasAnnotationSymbol(symbol, deferred) then
-                SymbolMutator.getOrErrorAndAbort.updateAnnotationWithTree(symbol, deferredAnnotation)
+            if symbol.isValDef || symbol.isDefDef then
+              if multitierAnnottee && (flags(decl) is Flags.Module) && (flags(symbol) is Flags.Deferred) then
+                resetFlag.invoke(denot.invoke(symbol, context), Flags.Deferred)
+                if !hasAnnotationSymbol(symbol, deferred) then
+                  SymbolMutator.getOrErrorAndAbort.updateAnnotationWithTree(symbol, deferredAnnotation)
 
-            if !hasAnnotationSymbol(symbol, compileTimeOnly) then
-              SymbolMutator.getOrErrorAndAbort.updateAnnotationWithTree(symbol, compileTimeOnlyAnnotation)
+              if !hasAnnotationSymbol(symbol, compileTimeOnly) then
+                SymbolMutator.getOrErrorAndAbort.updateAnnotationWithTree(symbol, compileTimeOnlyAnnotation)
 
           else if symbol.isClassDef && (hasAnnotationSymbol(symbol, multitier) || (flags(symbol) is Flags.Module)) then
             processDeclarations(symbol)
