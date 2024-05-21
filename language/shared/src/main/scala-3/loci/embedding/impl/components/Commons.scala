@@ -267,11 +267,9 @@ trait Commons:
     (symbol.getAnnotation(symbols.`embedding.multitier`) collect { case Apply(_, List(arg)) => arg })
 
   def isMultitierModule(symbol: Symbol): Boolean =
-    symbol.exists &&
-      ((symbol.isField || symbol.isModuleDef || symbol.isClassDef) &&
-        (symbol.hasAnnotation(symbols.`language.multitier`) || symbol.hasAnnotation(symbols.`embedding.multitier`)) ||
-       symbol.isField &&
-        (symbol.info.baseClasses exists isMultitierModule))
+    symbol.exists && (symbol.isField || (symbol.isModuleDef && !symbol.isPackageDef) || symbol.isClassDef) &&
+      (symbol.hasAnnotation(symbols.`language.multitier`) || symbol.hasAnnotation(symbols.`embedding.multitier`) ||
+       !symbol.isClassDef && (symbol.info.baseClasses exists isMultitierModule))
 
   def isMultitierNestedPath(symbol: Symbol): Boolean =
     symbol.exists && (isMultitierModule(symbol) || symbol.isModuleDef && isMultitierNestedPath(symbol.maybeOwner))

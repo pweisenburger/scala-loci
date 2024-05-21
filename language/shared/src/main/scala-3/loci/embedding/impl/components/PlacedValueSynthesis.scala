@@ -71,6 +71,78 @@ trait PlacedValueSynthesis:
           info.withResultType(placementInfo.valueType)
       erasedInfo -> placementInfo.peerType.typeSymbol
 
+  private object multitierModuleTypeUnlifter extends TypeMap(quotes):
+    private var nestedInAugmentation = false
+    private var underlyingSymbolToUnlift = Option.empty[Symbol]
+
+    private inline def inNestedAugmentation[T](nested: Boolean)(body: => T) =
+      val previousNestedInAugmentation = nestedInAugmentation
+      nestedInAugmentation = nested
+      val result = body
+      nestedInAugmentation = previousNestedInAugmentation
+      result
+
+    private inline def unlift(tpe: TypeRepr, symbol: Symbol) =
+      if nestedInAugmentation then
+        underlyingSymbolToUnlift = Some(symbol)
+        tpe
+      else
+        underlyingSymbolToUnlift = None
+        tpe.select(synthesizedPlacedValues(symbol, defn.AnyClass).symbol)
+
+    private inline def preserve(tpe: TypeRepr) =
+      underlyingSymbolToUnlift = None
+      tpe
+
+    private def dealiasUpperBounds(tpe: TypeRepr): TypeRepr =
+      tpe.dealias match
+        case tpe: TypeBounds =>
+          tpe.hi
+        case tpe =>
+          val symbol = tpe.typeSymbol
+          if symbol.exists && !symbol.isClassDef && symbol.isAbstractType then
+            symbol.info match
+              case tpe: TypeBounds => dealiasUpperBounds(tpe.hi)
+              case _ => tpe
+          else
+            tpe
+
+    override def transform(tpe: TypeRepr) = tpe match
+      case tpe: AnnotatedType =>
+        val underlying = inNestedAugmentation(true) { transform(tpe.underlying) }
+        val result = if underlying != tpe.underlying then AnnotatedType(underlying, tpe.annotation) else tpe
+        underlyingSymbolToUnlift.fold(result) { unlift(result, _) }
+      case tpe: Refinement =>
+        val parent = inNestedAugmentation(true) { transform(tpe.parent) }
+        val result = if parent != tpe.parent then Refinement(parent, tpe.name, tpe.info) else tpe
+        underlyingSymbolToUnlift.fold(result) { unlift(result, _) }
+      case tpe: AppliedType =>
+        val tycon = transform(tpe.tycon)
+        if tycon != tpe.tycon then AppliedType(tycon, tpe.args) else tpe
+      case tpe: MethodType =>
+        val methodType = MethodType(tpe.paramNames)(_ => tpe.paramTypes, _ => inNestedAugmentation(true) { transform(tpe.resType) })
+        if methodType != tpe then methodType else tpe
+      case tpe: PolyType =>
+        val polyType = PolyType(tpe.paramNames)(_ => tpe.paramBounds, _ => inNestedAugmentation(true) { transform(tpe.resType) })
+        if polyType != tpe then polyType else tpe
+      case tpe: TypeLambda =>
+        val typeLambda = TypeLambda(tpe.paramNames, _ => tpe.paramBounds, _ => inNestedAugmentation(true) { transform(tpe.resType) })
+        if typeLambda != tpe then typeLambda else tpe
+      case _ =>
+        val dealiased = dealiasUpperBounds(tpe)
+        val result = dealiased match
+          case tpe: NamedType => tpe
+          case _ => inNestedAugmentation(false) { super.transform(dealiased) }
+        if result == dealiased then
+          val symbol = result.typeSymbol
+          if symbol.exists && isMultitierModule(symbol) then
+            unlift(tpe, symbol)
+          else
+            preserve(tpe)
+        else
+          preserve(result)
+  end multitierModuleTypeUnlifter
+
   private def synthesizedValOrDef(symbol: Symbol): SynthesizedDefinitions = synthesizedDefinitionsCache.getOrElse(symbol, {
     val placedName = s"<placed ${symbol.name} of ${fullName(symbol.owner)}>"
     val (universalName, info, peer) =
@@ -86,10 +158,13 @@ trait PlacedValueSynthesis:
               symbol.name
           val (info, _) = erasePlacementType(paramType)
           (name, MethodType(List(paramName))(_ => List(info), _ => resultType), defn.AnyClass)
-        case _ =>
-          val name = if symbol.flags is Flags.Private then s"<placed private ${symbol.name} of ${fullName(symbol.owner)}>" else symbol.name
-          val (info, peer) = erasePlacementType(symbol.info)
-          (name, info, peer)
+        case tpe =>
+          if isMultitierModule(symbol) then
+            (symbol.name, multitierModuleTypeUnlifter.transform(tpe), defn.AnyClass)
+          else
+            val name = if symbol.flags is Flags.Private then s"<placed private ${symbol.name} of ${fullName(symbol.owner)}>" else symbol.name
+            val (info, peer) = erasePlacementType(symbol.info)
+            (name, info, peer)
 
     val universalValues = synthesizedPlacedValues(symbol.owner, defn.AnyClass).symbol
     val placedValues = synthesizedPlacedValues(symbol.owner, peer).symbol
