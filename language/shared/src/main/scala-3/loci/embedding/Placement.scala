@@ -29,7 +29,7 @@ object On:
 
   @experimental
   trait Placed:
-    transparent inline def apply[T, P](using Placement.Context.ResolutionWithFallback[P])(inline v: Placement.Context[P] ?=> T): T on P =
+    transparent inline def apply[T, P](using Placement.Context.Resolution[P])(inline v: Placement.Context[P] ?=> T): T on P =
       ${ impl.inferrableCanonicalPlacementTypeContextClosure[T, T on P]('{ v(using Placement.Context.fallback[P]) }) }
 
 @experimental
@@ -48,7 +48,7 @@ trait Select[Command[_, _[_, _]]]:
   def apply[P, Disambiguation](r: Seq[Remote[P]]): Command[P, fromMultiple] = erased
 
 trait Run[P, placed[_, _]]:
-  def run[R](using Placement.Context.ResolutionWithFallback[R]): Capture[P, R, placed] with Block[P, R, placed] = erased
+  def run[R](using Placement.Context.Resolution[R]): Capture[P, R, placed] with Block[P, R, placed] = erased
 
 trait Capture[P, R, placed[_, _]]:
   def capture(v: Any*): Block[P, R, placed] = erased

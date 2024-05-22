@@ -20,21 +20,7 @@ object Placement:
   object Context:
     type Resolution[P] = Context[P] { type Peer = P }
 
-    @compileTimeOnly("Illegal use of multitier construct")
-    def fallback[P]: Context[P] = erased
-
-    @compileTimeOnly("Illegal use of multitier construct")
-    given fallback[P](using Context[?]): Context[P] = erased
-
-    sealed trait ResolutionWithFallback[P]
-
-    sealed trait ResolutionWithFallbackFallback:
-      @compileTimeOnly("Illegal use of multitier construct")
-      given fallback[P]: ResolutionWithFallback[P] = erased
-
-    object ResolutionWithFallback extends ResolutionWithFallbackFallback:
-      @compileTimeOnly("Illegal use of multitier construct")
-      given resolution[P](using Resolution[P]): ResolutionWithFallback[P] = erased
-    end ResolutionWithFallback
+    @compileTimeOnly("Expression must be placed on a peer")
+    given fallback[P]: Resolution[P] = erased
   end Context
 end Placement

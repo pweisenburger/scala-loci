@@ -146,7 +146,6 @@ trait Commons:
     val subjective = TypeRepr.of[Placed.Subjective[?, ?]]
     val remote = TypeRepr.of[language.Remote[?]]
     val context = TypeRepr.of[Placement.Context[?]]
-    val contextResolutionWithFallback = TypeRepr.of[Placement.Context.ResolutionWithFallback[?]]
     val remoteRef = TypeRepr.of[transmitter.RemoteRef]
     val transmittable = TypeRepr.of[transmitter.Transmittable.Resolution[?, ?, ?, ?, ?]]
     val marshallable = TypeRepr.of[transmitter.Marshallable[?, ?, ?]]

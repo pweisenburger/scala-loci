@@ -60,9 +60,10 @@ trait PlacedStatements:
         Some(List.empty -> expr)
 
   private def bindingsForPlacedConstruct(bindings: List[Definition]) =
-    bindings exists: binding =>
+    val count = bindings count: binding =>
       val info = binding.symbol.info
-      !(info =:= TypeRepr.of[Nothing]) && info <:< types.contextResolutionWithFallback
+      !(info =:= TypeRepr.of[Nothing]) && info <:< types.context
+    count > 1
 
   extension (termModule: TermModule)
     private inline def tryBetaReduce(expr: Term) =
@@ -167,7 +168,7 @@ trait PlacedStatements:
       case _ => (stat.posInUserCode.startPosition, false)
 
     if inferred && (bindings.isEmpty || bindingsForPlacedConstruct(bindings)) then
-      errorAndCancel(s"Placed expressions without type ascription must be enclosed in a placed block: on[${placementInfo.peerType.safeShow}]", pos)
+      errorAndCancel(s"Placed expressions without type ascription must be enclosed in a placed block: on[${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)}]", pos)
 
     object singletonTypeChecker extends TypeMap(quotes):
       override def transform(tpe: TypeRepr) = tpe match
@@ -203,7 +204,7 @@ trait PlacedStatements:
         PlacementInfo(stat.tpe).fold(stat): placementInfo =>
           val (bindings, expr) = cleanPlacementSyntax(placementInfo, stat)(module.symbol)
           if bindings.isEmpty || bindingsForPlacedConstruct(bindings) then
-            errorAndCancel(s"Placed statements must be enclosed in a placed block: on[${placementInfo.peerType.safeShow}]", stat.posInUserCode.startPosition)
+            errorAndCancel(s"Placed statements must be enclosed in a placed block: on[${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)}]", stat.posInUserCode.startPosition)
           if placementInfo.modality.subjective then
             errorAndCancel("Placed statements cannot be subjective.", stat.posInUserCode.startPosition)
           if placementInfo.modality.local then
