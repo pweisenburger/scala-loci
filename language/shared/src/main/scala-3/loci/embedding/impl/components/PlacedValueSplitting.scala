@@ -22,7 +22,13 @@ trait PlacedValueSplitting:
     val synthesizedBody = rhs map: rhs =>
       original match
         case _ if impl.owner != synthesizedPlacedValues(module, peer).symbol =>
-          Literal(NullConstant()).select(symbols.asInstanceOf).appliedToType(impl.info.resultType.substituteParamRefsByTermRefs(impl))
+          val tpe = impl.info.resultType.substituteParamRefsByTermRefs(impl)
+          if tpe <:< TypeRepr.of[Nothing] then
+            val symbol = newMethod(impl, "nullOf", PolyType(List("T"))(_ => List(TypeBounds.empty), _.param(0)), Flags.Synthetic, Symbol.noSymbol)
+            val definition = DefDef(symbol, argss => Some(Literal(NullConstant()).select(symbols.asInstanceOf).appliedToTypeTrees(List(TypeIdent(argss.head.head.symbol)))))
+            Block(List(definition), Ref(symbol).appliedToType(tpe))
+          else
+            Literal(NullConstant()).select(symbols.asInstanceOf).appliedToType(impl.info.resultType.substituteParamRefsByTermRefs(impl))
         case PlacedStatement(_) =>
           extractPlacedBody(rhs).changeOwner(impl)
         case _ =>

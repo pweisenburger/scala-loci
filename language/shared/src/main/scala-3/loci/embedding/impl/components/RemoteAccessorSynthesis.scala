@@ -700,6 +700,12 @@ trait RemoteAccessorSynthesis:
     val inheritedValues =
       if !canceled then
         val overridden = mutable.Set.empty[Symbol]
+
+        overridden ++=
+          values.iterator flatMap: (original, _, _, _) =>
+            original.iterator flatMap:
+              _.allOverriddenSymbols
+
         module.typeRef.baseClasses.tail flatMap: parent =>
           parent.declarations flatMap: decl =>
             if (decl.isMethod || decl.isField) &&
@@ -723,6 +729,7 @@ trait RemoteAccessorSynthesis:
               None
       else
         List.empty
+    end inheritedValues
 
     val inheritedMarshallables = MutableCachedTypeSeqMap[mutable.SortedSet[Marshallable]]
 
