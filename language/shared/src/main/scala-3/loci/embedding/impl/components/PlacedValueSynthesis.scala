@@ -326,7 +326,7 @@ trait PlacedValueSynthesis:
             synthesizedPlacedValuesCache += (module, peer) -> placedValues
             synthesizedPlacedValuesCache += symbol -> placedValues
 
-            inline def collectDeclarations(impls: List[Symbol]) =
+            def collectDeclarations(impls: List[Symbol]) =
               impls collect { case impl if impl.owner == symbol => impl }
 
             val indices = mutable.Map.empty[Symbol, Int]

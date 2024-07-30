@@ -237,8 +237,12 @@ trait PlacedStatements:
                 paramss.init
               else
                 paramss
-            nonSyntheticParamss collectFirst Function.unlift { _.params find { _.symbol.isImplicit } } foreach: param =>
-              errorAndCancel("Non-local placed definitions cannot have context parameters.", param.posInUserCode)
+            nonSyntheticParamss foreach:
+              case TypeParamClause(param :: _) if !canceled =>
+                errorAndCancel("Non-local placed definitions cannot have type parameters.", param.posInUserCode)
+              case TermParamClause(param :: _) if !canceled && param.symbol.isImplicit =>
+                errorAndCancel("Non-local placed definitions cannot have context parameters.", param.posInUserCode)
+              case _ =>
           DefDef.copy(stat)(name, paramss, tpt, expr)
 
       case stat: Term =>

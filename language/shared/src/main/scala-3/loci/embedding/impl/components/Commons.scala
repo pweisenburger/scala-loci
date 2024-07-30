@@ -8,10 +8,10 @@ import utility.reflectionExtensions.*
 import scala.annotation.compileTimeOnly
 import scala.annotation.experimental
 import scala.reflect.TypeTest
-import scala.quoted.*
+import scala.quoted.{Expr, Quotes, quotes, Type}
 
 object Commons:
-  @compileTimeOnly("Cannot be used at run time")
+  @compileTimeOnly("Construct cannot be used at run time.")
   transparent inline private def ?[T]: T =
     throw new NotImplementedError
 
@@ -86,29 +86,29 @@ trait Commons:
     val marshal = '{ ?[transmitter.Marshallable[?, ?, ?]].marshal(?, ?) }.symbol
     val unmarshal = '{ ?[transmitter.Marshallable[?, ?, ?]].unmarshal(?[MessageBuffer], ?) }.symbol
     val transmission = TypeRepr.of[language.transmitter.Transmission.type].typeSymbol
-    val placedValue = TypeRepr.of[loci.runtime.PlacedValue[?, ?, ?, ?]].typeSymbol
-    val placedValueSignature = '{ ?[loci.runtime.PlacedValue[?, ?, ?, ?]].signature }.symbol
-    val placedValueArguments = '{ ?[loci.runtime.PlacedValue[?, ?, ?, ?]].arguments }.symbol
-    val placedValueResult = '{ ?[loci.runtime.PlacedValue[?, ?, ?, ?]].result }.symbol
-    val valueSignatureName = '{ ?[loci.runtime.Value.Signature].name }.symbol
-    val valueSignatureModule = '{ ?[loci.runtime.Value.Signature].module }.symbol
-    val valueSignaturePath = '{ ?[loci.runtime.Value.Signature].path }.symbol
-    val valueSignature = '{ loci.runtime.Value.Signature.apply(?, ?, ?) }.symbol
-    val peerSignature = '{ loci.runtime.Peer.Signature.apply(?, ?, ?) }.symbol
-    val peerSignatureCompare = '{ ?[loci.runtime.Peer.Signature] <= ? }.symbol
-    val peerTieSingle = '{ loci.runtime.Peer.Tie.Single }.symbol
-    val peerTieOptional = '{ loci.runtime.Peer.Tie.Optional }.symbol
-    val peerTieMultiple = '{ loci.runtime.Peer.Tie.Multiple }.symbol
-    val moduleSignature = '{ loci.runtime.Module.Signature.apply(?[String]) }.symbol
-    val moduleSignatureNested = '{ loci.runtime.Module.Signature.apply(?[loci.runtime.Module.Signature], ?[String]) }.symbol
-    val valueReferenceRemote = '{ ?[loci.runtime.Value.Reference].remote }.symbol
-    val remoteReferenceSignature = '{ ?[loci.runtime.Remote.Reference].signature }.symbol
-    val invokeRemoteAccess = '{ ?[loci.runtime.System].invokeRemoteAccess(?, ?, ?, ?, ?) }.symbol
-    val subjectiveValue = '{ ?[loci.runtime.System].subjectiveValue(?, ?) }.symbol
-    val remoteValue = '{ loci.runtime.RemoteValue.apply() }.symbol
-    val remoteRequest = TypeRepr.of[loci.runtime.RemoteRequest].typeSymbol
-    val marshallableInfo = TypeRepr.of[loci.runtime.MarshallableInfo].typeSymbol
-    val placedValueInfo = TypeRepr.of[loci.runtime.PlacedValueInfo].typeSymbol
+    val placedValue = TypeRepr.of[runtime.PlacedValue[?, ?, ?, ?]].typeSymbol
+    val placedValueSignature = '{ ?[runtime.PlacedValue[?, ?, ?, ?]].signature }.symbol
+    val placedValueArguments = '{ ?[runtime.PlacedValue[?, ?, ?, ?]].arguments }.symbol
+    val placedValueResult = '{ ?[runtime.PlacedValue[?, ?, ?, ?]].result }.symbol
+    val valueSignatureName = '{ ?[runtime.Value.Signature].name }.symbol
+    val valueSignatureModule = '{ ?[runtime.Value.Signature].module }.symbol
+    val valueSignaturePath = '{ ?[runtime.Value.Signature].path }.symbol
+    val valueSignature = '{ runtime.Value.Signature.apply(?, ?, ?) }.symbol
+    val peerSignature = '{ runtime.Peer.Signature.apply(?, ?, ?) }.symbol
+    val peerSignatureCompare = '{ ?[runtime.Peer.Signature] <= ? }.symbol
+    val peerTieSingle = '{ runtime.Peer.Tie.Single }.symbol
+    val peerTieOptional = '{ runtime.Peer.Tie.Optional }.symbol
+    val peerTieMultiple = '{ runtime.Peer.Tie.Multiple }.symbol
+    val moduleSignature = '{ runtime.Module.Signature.apply(?[String]) }.symbol
+    val moduleSignatureNested = '{ runtime.Module.Signature.apply(?[runtime.Module.Signature], ?[String]) }.symbol
+    val valueReferenceRemote = '{ ?[runtime.Value.Reference].remote }.symbol
+    val remoteReferenceSignature = '{ ?[runtime.Remote.Reference].signature }.symbol
+    val invokeRemoteAccess = '{ ?[runtime.System].invokeRemoteAccess(?, ?, ?, ?, ?) }.symbol
+    val subjectiveValue = '{ ?[runtime.System].subjectiveValue(?, ?) }.symbol
+    val remoteValue = '{ runtime.RemoteValue.apply() }.symbol
+    val remoteRequest = TypeRepr.of[runtime.RemoteRequest].typeSymbol
+    val marshallableInfo = TypeRepr.of[runtime.MarshallableInfo].typeSymbol
+    val placedValueInfo = TypeRepr.of[runtime.PlacedValueInfo].typeSymbol
     val erased = '{ embedding.erased }.symbol
     val erasedArgs = '{ embedding.erased(?) }.symbol
     val function1 = TypeRepr.of[Function1[?, ?]].typeSymbol
@@ -157,13 +157,13 @@ trait Commons:
     val transmittable = TypeRepr.of[transmitter.Transmittable.Resolution[?, ?, ?, ?, ?]]
     val marshallable = TypeRepr.of[transmitter.Marshallable[?, ?, ?]]
     val transmission = TypeRepr.of[language.transmitter.Transmission[?, ?, ?, ?, ?]]
-    val placedValues = TypeRepr.of[loci.runtime.PlacedValues]
-    val valueSignature = TypeRepr.of[loci.runtime.Value.Signature]
-    val valueReference = TypeRepr.of[loci.runtime.Value.Reference]
-    val peerSignature = TypeRepr.of[loci.runtime.Peer.Signature]
-    val peerTie = TypeRepr.of[loci.runtime.Peer.Tie]
-    val moduleSignature = TypeRepr.of[loci.runtime.Module.Signature]
-    val system = TypeRepr.of[loci.runtime.System]
+    val placedValues = TypeRepr.of[runtime.PlacedValues]
+    val valueSignature = TypeRepr.of[runtime.Value.Signature]
+    val valueReference = TypeRepr.of[runtime.Value.Reference]
+    val peerSignature = TypeRepr.of[runtime.Peer.Signature]
+    val peerTie = TypeRepr.of[runtime.Peer.Tie]
+    val moduleSignature = TypeRepr.of[runtime.Module.Signature]
+    val system = TypeRepr.of[runtime.System]
     val conversion = TypeRepr.of[Conversion[?, ?]]
     val seq = TypeRepr.of[Seq[?]]
 
@@ -215,12 +215,6 @@ trait Commons:
   extension (pos: Position)
     def startPosition = if pos.startLine != pos.endLine then Position(pos.sourceFile, pos.start, pos.start) else pos
     def endPosition = if pos.startLine != pos.endLine then Position(pos.sourceFile, pos.end, pos.end) else pos
-
-  extension (tree: Term | TypeTree | TypeBoundsTree)
-    def tpe = tree match
-      case tree: Term => tree.tpe
-      case tree: TypeTree => tree.tpe
-      case tree: TypeBoundsTree => tree.tpe
 
   extension (symbol: Symbol)
     def findAncestor(predicate: Symbol => Boolean): Option[Symbol] =

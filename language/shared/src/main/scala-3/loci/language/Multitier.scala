@@ -10,7 +10,9 @@ import scala.quoted.*
 class multitier(using MultitierPreprocessor) extends MacroAnnotation:
   def this(accessorGeneration: AccessorGeneration)(using MultitierPreprocessor) = this()
   def transform(using Quotes)(tree: quotes.reflect.Definition): List[quotes.reflect.Definition] =
-    impl.Multitier.annotation(tree)
+    impl.Multitier.annotation(tree, None)
+  def transform(using Quotes)(tree: quotes.reflect.Definition, companion: Option[quotes.reflect.Definition]): List[quotes.reflect.Definition] =
+    impl.Multitier.annotation(tree, companion)
 
 //object multitier:
 //  def start[P, Inst[P] <: Instance[P]](instance: Inst[P]): Runtime[P] =

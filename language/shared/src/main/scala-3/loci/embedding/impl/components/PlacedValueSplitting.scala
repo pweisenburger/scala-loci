@@ -35,8 +35,9 @@ trait PlacedValueSplitting:
           rhs.changeOwner(impl)
 
     if impl.isMethod then
-      DefDef(impl, paramss => synthesizedBody map:
-        _.substituteRefs((original.symbol.paramSymss.flatten zip (paramss flatMap { _ map { _.symbol } })).toMap, impl))
+      def body(paramss: List[List[Tree]]) = synthesizedBody map:
+        _.substituteRefs((original.symbol.paramSymss.flatten zip (paramss flatMap { _ map { _.symbol } })).toMap, impl)
+      DefDef(impl, body)
     else
       ValDef(impl, synthesizedBody)
   end synthesizePlacedDefinition

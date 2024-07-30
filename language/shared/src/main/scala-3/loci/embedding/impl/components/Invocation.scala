@@ -56,7 +56,7 @@ trait Invocation:
   private object SubjectiveLocalAccess:
     def unapply(term: Term) = term match
       case Apply(Apply(TypeApply(Select(expr @ PlacedValueReference(reference, placementInfo), names.to), _), List(remote)), _)
-          if term.symbol.owner == symbols.placed =>
+          if term.symbol.maybeOwner == symbols.placed =>
         Some(expr, reference, placementInfo, remote)
       case _ =>
         None

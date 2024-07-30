@@ -10,7 +10,7 @@ import scala.quoted.*
 
 @experimental
 object Multitier:
-  def annotation(using Quotes)(tree: quotes.reflect.Definition): List[quotes.reflect.Definition] =
+  def annotation(using Quotes)(tree: quotes.reflect.Definition, companion: Option[quotes.reflect.Definition]): List[quotes.reflect.Definition] =
     import quotes.reflect.*
 
     object processor extends
@@ -109,25 +109,23 @@ object Multitier:
     end Processor
 
     tree match
+      case _: ClassDef | _: ValDef if tree.symbol.owner hasAncestor isMultitierModule =>
+        List(tree) ++ companion
+
       case _: ClassDef =>
-        if !(tree.symbol.owner hasAncestor isMultitierModule) then
-          object preprocessor extends Preprocessor
-          val preprocessed = preprocessor.transformSubTrees(List(tree))(tree.symbol.owner).head
+        object preprocessor extends Preprocessor
+        val preprocessed = preprocessor.transformSubTrees(List(tree))(tree.symbol.owner).head
 
-          object processor extends Processor(canceled)
-          val processed = processor.transformSubTrees(List(preprocessed))(tree.symbol.owner).head
+        object processor extends Processor(canceled)
+        val processed = processor.transformSubTrees(List(preprocessed))(tree.symbol.owner).head
 
-          reportErrors(abortOnErrors = true)
-          println(processed.show)
-          List(processed)
-        else
-          List(tree)
-
-      case _: ValDef if tree.symbol.owner hasAncestor isMultitierModule =>
-        List(tree)
+        reportErrors(abortOnErrors = true)
+        List(processed) ++ companion
 
       case _ =>
-        report.error("@multitier annotation is only applicable to classes, traits or objects.")
-        List(tree)
+        report.error(
+          "@multitier annotation is only applicable to classes, traits or objects " +
+          "and to values nested inside multitier classes, traits or objects.")
+        List(tree) ++ companion
   end annotation
 end Multitier

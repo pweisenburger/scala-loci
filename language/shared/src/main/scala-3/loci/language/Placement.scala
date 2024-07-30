@@ -18,17 +18,17 @@ import scala.annotation.{compileTimeOnly, experimental}
 //  macro impl.Connections.factory
 
 @experimental
-@compileTimeOnly("Placed expression can only used in multitier module")
+@compileTimeOnly("Placed expression can only be used in a multitier module.")
 object placed extends On.Placed
 
 @experimental
-@compileTimeOnly("Placed expression can only used in multitier module")
+@compileTimeOnly("Placed expression can only be used in a multitier module.")
 object on extends Select[Run]:
   sealed trait on[P] extends On.Fallback[P], Run[P, from]
   transparent inline def apply[P]: on[P] = ${ On[P] }
 
 @experimental
-@compileTimeOnly("Placed expression can only used in multitier module")
+@compileTimeOnly("Placed expression can only be used in a multitier module.")
 object remote extends Narrow, Select[Call], Call[Nothing, from], Gateway[Nothing]:
   sealed trait remote[P] extends Call[P, from], Gateway[P]
   def apply[P]: remote[P] = erased

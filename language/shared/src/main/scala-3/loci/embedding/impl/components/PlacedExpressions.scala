@@ -82,7 +82,7 @@ trait PlacedExpressions:
        !(tpe =:= TypeRepr.of[Nothing]) && (
          tpe <:< types.context || tpe <:< types.multitierContext ||
          tpe <:< types.placedValue || tpe <:< types.subjective) then
-      errorAndCancel(message, pos)
+      errorAndCancel(message, pos.startPosition)
 
   private class TypePlacementTypesEraser(pos: Position, checkOnly: Boolean) extends TypeMap(quotes):
     override def transform(tpe: TypeRepr) =
@@ -132,8 +132,12 @@ trait PlacedExpressions:
     def copyAnnotations(from: Symbol, to: Symbol) =
       if from.annotations.nonEmpty then
         SymbolMutator.get.fold(
-          errorAndCancel("Annotations not supported for definitions that refer to placement types with current compiler version. Try ascribing their types explicitly.", from.annotations.head.posInUserCode)):
-          symbolMutator => from.annotations foreach { symbolMutator.updateAnnotationWithTree(to, _) }
+          errorAndCancel(
+            "Annotations not supported for definitions that refer to placement types with current compiler version. " +
+            "Try ascribing their types explicitly.",
+            from.annotations.head.posInUserCode)):
+          symbolMutator =>
+            from.annotations foreach { symbolMutator.updateAnnotationWithTree(to, _) }
 
     def adaptedDefinitionType(stat: ValDef | DefDef): TypeRepr
 
