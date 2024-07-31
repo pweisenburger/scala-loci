@@ -52,8 +52,8 @@ trait PlacedBlocks:
   private object PlacedBlockInvocation:
     def unapply(term: Term) =
       val (expr, access) = term match
-        case PlacedAccess(term, arg, typeApplies, apply, prefix, transmission, suffix) =>
-          (arg, Some(term, arg, typeApplies, apply, prefix, transmission, suffix))
+        case PlacedAccess(term, apply, arg, typeApplies, prefix, transmission, suffix) =>
+          (arg, Some(term, apply, arg, typeApplies, prefix, transmission, suffix))
         case _ =>
           (term, None)
       expr match
@@ -235,8 +235,8 @@ trait PlacedBlocks:
             .appliedTo(Ref(symbols.erased).appliedToType(TypeRepr.of[Nothing]))
 
           val callAccess = access match
-            case Some(term, _, typeApplies, apply, prefix, transmission, suffix) =>
-              PlacedAccess(term, call, typeApplies, apply, prefix, transmission, suffix)
+            case Some(term, apply, _, typeApplies, prefix, transmission, suffix) =>
+              PlacedAccess(term, apply, call, typeApplies, prefix, transmission, suffix)
             case _ =>
               call
 

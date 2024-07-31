@@ -90,16 +90,16 @@ trait Invocation:
 
   private object PlacedAccessRetrieval:
     def unapply(term: Term) = term match
-      case select @ Select(PlacedAccess(term, arg, typeApplies, apply, prefix, transmission, suffix), name) =>
-        if term.symbol.isExtensionMethod then
-          Some(term, arg, typeApplies, apply, prefix, transmission, suffix, Some(select.symbol), Some(term.symbol.name))
+      case select @ Select(PlacedAccess(term, apply, arg, typeApplies, prefix, transmission, suffix), name) =>
+        if apply.symbol.isExtensionMethod then
+          Some(term, apply, arg, typeApplies, prefix, transmission, suffix, Some(select.symbol), Some(apply.symbol.name))
         else
-          Some(term, arg, typeApplies, apply, prefix, transmission, suffix, Some(select.symbol), Some(select.symbol.name))
-      case PlacedAccess(term, arg, typeApplies, apply, prefix, transmission, suffix) =>
-        if term.symbol.isExtensionMethod then
-          Some(term, arg, typeApplies, apply, prefix, transmission, suffix, None, Some(term.symbol.name))
+          Some(term, apply, arg, typeApplies, prefix, transmission, suffix, Some(select.symbol), Some(select.symbol.name))
+      case PlacedAccess(term, apply, arg, typeApplies, prefix, transmission, suffix) =>
+        if apply.symbol.isExtensionMethod then
+          Some(term, apply, arg, typeApplies, prefix, transmission, suffix, None, Some(apply.symbol.name))
         else
-          Some(term, arg, typeApplies, apply, prefix, transmission, suffix, None, None)
+          Some(term, apply, arg, typeApplies, prefix, transmission, suffix, None, None)
       case _ =>
         None
 
@@ -377,7 +377,7 @@ trait Invocation:
 
           term match
             // remote access to placed values of other peer instances using accessor syntax (possibly combined with remote procedure syntax)
-            case PlacedAccessRetrieval(expr, arg, typeApplies, apply, prefix, transmission, suffix, select, name) =>
+            case PlacedAccessRetrieval(expr, apply, arg, typeApplies, prefix, transmission, suffix, select, name) =>
               val List(v, r, t, l, m) = transmission.tpe.widenTermRefByName.dealias.typeArgs: @unchecked
 
               val (value, selection, call) = arg match
@@ -404,9 +404,9 @@ trait Invocation:
 
                         val access = PlacedAccess(
                           expr,
+                          apply,
                           arg,
                           transformSubTrees(typeApplies)(owner),
-                          apply,
                           transformTerms(prefix)(owner),
                           request,
                           transformTerms(suffix)(owner))

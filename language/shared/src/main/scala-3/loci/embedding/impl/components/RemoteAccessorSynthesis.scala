@@ -238,7 +238,7 @@ trait RemoteAccessorSynthesis:
 
   private object PlacedBlockInvocation:
     def unapply(term: Term) = term match
-      case PlacedAccess(_, term @ PlacedBlock(value, captures, pos), _, _, _, _, _) => Some(term, value, captures, pos)
+      case PlacedAccess(_, _, term @ PlacedBlock(value, captures, pos), _, _, _, _) => Some(term, value, captures, pos)
       case PlacedBlock(_, captures, pos) => Some(term, TypeRepr.of[Unit], captures, pos)
       case _ => None
 
@@ -568,7 +568,7 @@ trait RemoteAccessorSynthesis:
             blocks.put(block, ())
             foldOverTree((indexing, index + 1, (None, signature, tpe, prolog) :: values, transmittables, accessed, blocks, pos), tree)(owner)
 
-          case PlacedAccess(_, PlacedValueReference(value, _), _, _, _, _, _) if value.symbol.exists =>
+          case PlacedAccess(_, _, PlacedValueReference(value, _), _, _, _, _) if value.symbol.exists =>
             foldOverTree((indexing, index, values, transmittables, accessed + value.symbol, blocks, pos), tree)(owner)
 
           case tree: Term if !(tree.tpe =:= TypeRepr.of[Nothing]) && tree.tpe <:< types.transmittable && !isLocalVariable(tree.symbol) =>

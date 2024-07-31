@@ -64,6 +64,17 @@ trait PlacedExpressions:
       case NonPlacedStatement(stat) => Some(stat)
       case _ => None
 
+  private def placementTypeCheckExemption(symbol: Symbol) =
+    symbol match
+      case PlacedAccess.Transmission(_) =>
+        true
+      case _ =>
+        val owner = symbol.maybeOwner
+        owner == symbols.select || owner == symbols.run ||
+        owner == symbols.capture || owner == symbols.block ||
+        owner == symbols.narrow || owner == symbols.call ||
+        owner == symbols.placed || owner == symbols.subjective
+
   private def selectionType(tpe: TypeRepr) = tpe match
     case AppliedType(_, _) | Refinement(_, _, _) =>
       !(tpe =:= TypeRepr.of[Nothing]) &&
@@ -228,23 +239,19 @@ trait PlacedExpressions:
           errorAndCancel("Illegal subjective access.", term.posInUserCode)
         super.transformTerm(term)(owner)
 
+      // keep placement types in the intended language constructs that expect them as type parameters
+      case TypeApply(fun, args) if placementTypeCheckExemption(term.symbol) =>
+        TypeApply.copy(term)(transformTerm(fun)(owner), args)
+
       // keep direct placed values accesses through the intended language constructs that expect placed values
       // check arguments before applied function to improve error messages
-      case term @ Apply(_, _) =>
-        def skipApplications(term: Term): Term = term match
-          case TypeApply(fun, args) =>
-            TypeApply.copy(term)(skipApplications(fun), transformTypeTrees(args)(owner))
-          case Apply(fun, args) =>
-            Apply.copy(term)(skipApplications(fun), transformTerms(args)(owner))
-          case _ =>
-            transformTerm(term)(owner)
-
+      case term @ Apply(_, _) if placementTypeCheckExemption(term.symbol) =>
         val args = clearTypeApplications(term.fun).tpe match
           case MethodType(_, paramTypes, _) =>
             paramTypes zip term.args map: (tpe, arg) =>
               if !(tpe =:= TypeRepr.of[Nothing]) && tpe <:< types.placedValue then
                 val Narrowing(expr) = arg
-                skipApplications(expr)
+                super.transformTerm(expr)(owner)
               else
                 transformTerm(arg)(owner)
           case _ =>
