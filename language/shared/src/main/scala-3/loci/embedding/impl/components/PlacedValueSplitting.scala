@@ -10,7 +10,7 @@ import scala.collection.mutable
 
 @experimental
 trait PlacedValueSplitting:
-  this: Component & Commons & Placements & Peers & PlacedTransformations & PlacedStatements & PlacedValueSynthesis =>
+  this: Component & Commons & Placements & NonPlacements & Peers & PlacedTransformations & PlacedStatements & PlacedValueSynthesis =>
   import quotes.reflect.*
 
   private def synthesizePlacedDefinition(impl: Symbol, original: Statement, module: Symbol, peer: Symbol): ValDef | DefDef =
@@ -29,8 +29,8 @@ trait PlacedValueSplitting:
             Block(List(definition), Ref(symbol).appliedToType(tpe))
           else
             Literal(NullConstant()).select(symbols.asInstanceOf).appliedToType(impl.info.resultType.substituteParamRefsByTermRefs(impl))
-        case PlacedStatement(_) =>
-          extractPlacedBody(rhs).changeOwner(impl)
+        case PlacedStatement(_) | NonPlacedStatement(_) =>
+          extractPlacementBody(rhs).changeOwner(impl)
         case _ =>
           rhs.changeOwner(impl)
 
@@ -82,7 +82,7 @@ trait PlacedValueSplitting:
           if !placementInfo.isDefined then
             bodies.prepended(universalPlacedValues)(term.changeOwner(universalPlacedValuesLocalDummy))
           else if peer == defn.AnyClass then
-            bodies.prepended(universalPlacedValues)(extractPlacedBody(term).changeOwner(universalPlacedValuesLocalDummy))
+            bodies.prepended(universalPlacedValues)(extractPlacementBody(term).changeOwner(universalPlacedValuesLocalDummy))
           else
             synthesizedStatement(module.symbol, peer, index).fold(bodies): statement =>
               bodies.prepended(universalPlacedValues)(DefDef(statement.binding, _ => Some(Literal(UnitConstant()))), Ref(statement.binding).appliedToNone)
@@ -91,7 +91,7 @@ trait PlacedValueSplitting:
           bodiesUniversalValues
         else
           synthesizedStatement(module.symbol, peer, index).fold(bodiesUniversalValues): statement =>
-            val rhs = extractPlacedBody(term) match
+            val rhs = extractPlacementBody(term) match
               case Block(statements, expr) if expr.tpe.typeSymbol != defn.UnitClass =>
                 Block(statements :+ expr, Literal(UnitConstant()))
               case expr if expr.tpe.typeSymbol != defn.UnitClass =>

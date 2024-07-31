@@ -22,6 +22,9 @@ object reflectionExtensions:
       !(symbol.flags is quotes.reflect.Flags.Module) &&
       !(symbol.flags is quotes.reflect.Flags.Package)
 
+    def isParam =
+      symbol.flags is quotes.reflect.Flags.Param
+
     def isFieldAccessor =
       symbol.flags is quotes.reflect.Flags.FieldAccessor
 
@@ -150,6 +153,28 @@ object reflectionExtensions:
         substitutions: Map[quotes.reflect.Symbol, quotes.reflect.Symbol],
         owner: quotes.reflect.Symbol) =
       Substitutor.substituteRefsInTerm(substitutions, owner, term)
+  end extension
+
+  extension (using Quotes)(termModule: quotes.reflect.TermModule)
+    def safeBetaReduce(term: quotes.reflect.Term) =
+      import quotes.reflect.*
+
+      object firstOwnerSymbolAccumulator extends TreeAccumulator[Option[Symbol]]:
+        def foldTree(ownerSymbol: Option[Symbol], tree: Tree)(owner: Symbol) =
+          ownerSymbol orElse {
+            tree match
+              case _: Definition => Some(tree.symbol.owner)
+              case _ => foldOverTree(None, tree)(owner)
+          }
+
+      firstOwnerSymbolAccumulator.foldTree(None, term)(Symbol.noSymbol).fold(Term.betaReduce(term)) { owner =>
+        val expr = Expr.betaReduce(term.asExpr)(using owner.asQuotes).asTerm
+        Option.when(expr ne term) { expr }
+      }
+    end safeBetaReduce
+
+    def safeTryBetaReduce(expr: quotes.reflect.Term) =
+      quotes.reflect.Term.safeBetaReduce(expr) getOrElse expr
   end extension
 
   extension (using Quotes)(tpe: quotes.reflect.TypeRepr)

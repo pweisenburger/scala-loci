@@ -10,7 +10,7 @@ import scala.annotation.experimental
 
 @experimental
 trait PlacedExpressions:
-  this: Component & Commons & ErrorReporter & Placements & PlacedTransformations & PlacedStatements =>
+  this: Component & Commons & ErrorReporter & Placements & NonPlacements & PlacedTransformations & PlacedStatements =>
   import quotes.reflect.*
 
   private object PlacementLiftingConversion:
@@ -58,6 +58,12 @@ trait PlacedExpressions:
       case _ =>
         Some(term)
 
+  private object PlacedOrNonPlacedStatement:
+    def unapply(stat: Statement) = stat match
+      case PlacedStatement(statstat) => Some(stat)
+      case NonPlacedStatement(stat) => Some(stat)
+      case _ => None
+
   private def selectionType(tpe: TypeRepr) = tpe match
     case AppliedType(_, _) | Refinement(_, _, _) =>
       !(tpe =:= TypeRepr.of[Nothing]) &&
@@ -72,7 +78,10 @@ trait PlacedExpressions:
     if symbol == symbols.`language.per` || symbol == symbols.`language.on` ||
        symbol == symbols.`embedding.on` || symbol == symbols.`embedding.of` ||
        symbol == symbols.subjective || symbol == symbols.`language.Local` ||
-       !(tpe =:= TypeRepr.of[Nothing]) && (tpe <:< types.context || tpe <:< types.placedValue || tpe <:< types.subjective) then
+       symbol == symbols.nonplaced || symbol == symbols.nonplacedType ||
+       !(tpe =:= TypeRepr.of[Nothing]) && (
+         tpe <:< types.context || tpe <:< types.multitierContext ||
+         tpe <:< types.placedValue || tpe <:< types.subjective) then
       errorAndCancel(message, pos)
 
   private class TypePlacementTypesEraser(pos: Position, checkOnly: Boolean) extends TypeMap(quotes):
@@ -88,11 +97,18 @@ trait PlacedExpressions:
           if selectionType(corrected) then
             TypeRepr.of[Unit]
           else
-            PlacementInfo(corrected).fold(super.transform(corrected)): placementInfo =>
-              if placementInfo.modality.subjective then
-                TypeRepr.of[Unit]
-              else
-                transform(placementInfo.valueType)
+            PlacementInfo(corrected) match
+              case Some(placementInfo) =>
+                if placementInfo.modality.subjective then
+                  TypeRepr.of[Unit]
+                else
+                  transform(placementInfo.valueType)
+              case _ =>
+                NonPlacementInfo(corrected) match
+                  case Some(nonPlacementInfo) =>
+                    transform(nonPlacementInfo.valueType)
+                  case _ =>
+                    super.transform(corrected)
         else
           super.transform(tpe)
 
@@ -180,8 +196,15 @@ trait PlacedExpressions:
       TypePlacementTypesEraser(stat.posInUserCode, checkOnly).transform(stat.symbol.info)
 
     override def transformStatement(stat: Statement)(owner: Symbol) = stat match
-      case ClassDef(_, _, _, _, _) if isMultitierModule(stat.symbol) =>
+      case stat: ClassDef if isMultitierModule(stat.symbol) =>
         stat
+      case stat: ValDef =>
+        val symbol = stat.symbol
+        symbol.maybeOwner.paramSymss match
+          case _ :+ List(`symbol`) if hasSyntheticMultitierContextArgument(symbol.maybeOwner) =>
+            stat
+          case _ =>
+            super.transformStatement(stat)(owner)
       case _ =>
         super.transformStatement(stat)(owner)
 
@@ -246,7 +269,7 @@ trait PlacedExpressions:
 
           case _ => term match
             // check type of identifiers
-            case Ident(_) | Select(_, _) if checkOnly =>
+            case _: Ref if checkOnly =>
               TypePlacementTypesEraser(term.posInUserCode, checkOnly = true).transform(term.tpe)
               super.transformTerm(term)(owner)
 
@@ -385,18 +408,18 @@ trait PlacedExpressions:
 
   private val eraserCheckOnly = ExpressionPlacementTypesEraserAndUnitCoercer(checkOnly = true, (_, _) => (), (_, _) => ())
 
-  private def erasePlacementTypesFromBody(term: Term, owner: Symbol) =
+  private def erasePlacementTypesFromBody(term: Term)(owner: Symbol) =
     var substitutions = List.empty[(Symbol, Symbol)]
     var replacements = List.empty[(Symbol, Symbol)]
     val eraser = ExpressionPlacementTypesEraserAndUnitCoercer(checkOnly = false, substitutions ::= _ -> _, replacements ::= _ -> _)
-    val expr = transformPlacedBody(term): (symbol, body, expr) =>
+    val expr = transformPlacementBody(term): (symbol, body, expr) =>
       val term = if canceled then body else eraseSubjectiveTypesInClosures(eraser.transformTerm(body)(symbol))
       if !canceled then typesInClosuresChecker.traverseTree(term)(owner)
-      term -> Some(expr)
+      term -> expr
     if canceled then term else substituteReferences(expr, owner, substitutions, replacements)
 
   private def checkPlacementTypesInArguments(paramss: List[ParamClause], owner: Symbol) =
-    paramss foreach { _.params foreach { eraserCheckOnly.transformStatement(_)(owner) } }
+    paramss foreach { _.params foreach { eraserCheckOnly.transformTree(_)(owner) } }
 
   private def checkPlacementTypesInResult(tpt: TypeTree, owner: Symbol) =
     def skipToCode(content: String, pos: Int): Int =
@@ -446,18 +469,28 @@ trait PlacedExpressions:
         eraserCheckOnly.transformTree(value)(owner)
 
     tpt match
-      case Inferred() =>
+      case Inferred() | Applied(Inferred(), List(Inferred(), _)) =>
         val eraser = TypePlacementTypesEraser(tpt.posInUserCode, checkOnly = true)
-        PlacementInfo(tpt.tpe).fold(eraser.transform(tpt.tpe)) { placementInfo =>
-          eraser.transform(placementInfo.valueType)
-          eraser.transform(placementInfo.peerType)
-          placementInfo.modality.subjectivePeerType foreach eraser.transform
-        }
+        PlacementInfo(tpt.tpe) match
+          case Some(placementInfo) =>
+            eraser.transform(placementInfo.valueType)
+            eraser.transform(placementInfo.peerType)
+            placementInfo.modality.subjectivePeerType foreach eraser.transform
+          case _ =>
+            NonPlacementInfo(tpt.tpe) match
+              case Some(nonPlacementInfo) =>
+                eraser.transform(nonPlacementInfo.valueType)
+              case _ =>
+                eraser.transform(tpt.tpe)
 
-      case Applied(on @ (_: TypeIdent | _: TypeSelect), List(value: TypeTree, peer: TypeTree))
+      case Applied(on, List(value: TypeTree, peer: TypeTree))
           if on.symbol == symbols.`language.on` =>
         eraserCheckOnly.transformTree(peer)(owner)
-        checkNotation(on, infix = true)
+
+        on match
+          case _: TypeIdent | _: TypeSelect =>
+            checkNotation(on, infix = true)
+          case _ =>
 
         if value.tpe <:< TypeRepr.of[Nothing] then
           value match
@@ -480,20 +513,20 @@ trait PlacedExpressions:
 
   def eraseMultitierConstructs(module: ClassDef): ClassDef =
     val body = module.body map:
-      case PlacedStatement(stat @ ValDef(name, tpt, rhs)) =>
+      case PlacedOrNonPlacedStatement(stat @ ValDef(name, tpt, rhs)) =>
         checkPlacementTypesInResult(tpt, stat.symbol)
-        ValDef.copy(stat)(name, tpt, rhs map { erasePlacementTypesFromBody(_, stat.symbol) })
-      case PlacedStatement(stat @ DefDef(name, paramss, tpt, rhs)) =>
+        ValDef.copy(stat)(name, tpt, rhs map { erasePlacementTypesFromBody(_)(stat.symbol) })
+      case PlacedOrNonPlacedStatement(stat @ DefDef(name, paramss, tpt, rhs)) =>
         checkPlacementTypesInArguments(paramss, stat.symbol)
         checkPlacementTypesInResult(tpt, stat.symbol)
-        DefDef.copy(stat)(name, paramss, tpt, rhs map { erasePlacementTypesFromBody(_, stat.symbol) })
+        DefDef.copy(stat)(name, paramss, tpt, rhs map { erasePlacementTypesFromBody(_)(stat.symbol) })
       case PlacedStatement(stat: Term) =>
-        erasePlacementTypesFromBody(stat, module.symbol)
+        erasePlacementTypesFromBody(stat)(module.symbol)
       case stat @ DefDef(_, List(TermParamClause(List(_))), tpt, _)
           if tpt.tpe.typeSymbol == defn.UnitClass && stat.symbol.isFieldAccessor =>
         stat
       case stat =>
-        eraserCheckOnly.transformStatement(stat)(module.symbol)
+        eraserCheckOnly.transformTree(stat)(module.symbol)
         stat
 
     ClassDef.copy(module)(module.name, module.constructor, module.parents, module.self, body)

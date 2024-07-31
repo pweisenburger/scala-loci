@@ -20,6 +20,7 @@ object Multitier:
       Annotations,
       SymbolTrees,
       Placements,
+      NonPlacements,
       Peers,
       AccessPath,
       PlacedTransformations,
@@ -60,45 +61,51 @@ object Multitier:
       override def transformTerm(term: Term)(owner: Symbol) =
         if canceled then term else super.transformTerm(term)(owner)
 
-      override def transformStatement(stat: Statement)(owner: Symbol) = stat match
-        case stat: ValDef if stat.symbol.hasAnnotation(symbols.`language.multitier`) =>
-          trySwapMultitierAnnotation(stat.symbol)
-          super.transformStatement(stat)(owner)
+      override def transformStatement(stat: Statement)(owner: Symbol) =
+        super.transformStatement(stat)(owner) match
+          case stat: ValDef if stat.symbol.hasAnnotation(symbols.`language.multitier`) =>
+            trySwapMultitierAnnotation(stat.symbol)
+            symbolOriginalTree(stat.symbol) = stat
+            stat
 
-        case stat: ClassDef if isMultitierModule(stat.symbol) =>
-          trySwapMultitierAnnotation(stat.symbol)
+          case stat: ClassDef if isMultitierModule(stat.symbol) =>
+            trySwapMultitierAnnotation(stat.symbol)
+            symbolOriginalTree(stat.symbol) = stat
 
-          val preprocessed = preprocessingPhases.foldLeft(stat): (stat, process) =>
-            if !canceled then
-              val processed = process(stat)
-              symbolTree(processed.symbol) = processed
-              processed
-            else
-              stat
-
-          super.transformStatement(preprocessed)(owner)
-
-        case stat =>
-          super.transformStatement(stat)(owner)
-    end Preprocessor
-
-    class Processor(skip: Boolean) extends SafeTreeMap(quotes):
-      override def transformStatement(stat: Statement)(owner: Symbol) = stat match
-        case stat: ClassDef if isMultitierModule(stat.symbol) =>
-          val processed =
-            if !skip then
-              processingPhases.foldLeft(stat): (stat, process) =>
+            preprocessingPhases.foldLeft(stat): (stat, process) =>
+              if !canceled then
                 val processed = process(stat)
                 symbolTree(processed.symbol) = processed
                 processed
-            else
-              stat
+              else
+                stat
 
-          APIExtraction.extractAPI(processed)
-          super.transformStatement(processed)(owner)
+          case stat: Definition =>
+            symbolOriginalTree(stat.symbol) = stat
+            stat
 
-        case stat =>
-          super.transformStatement(stat)(owner)
+          case stat =>
+            stat
+    end Preprocessor
+
+    class Processor(skip: Boolean) extends SafeTreeMap(quotes):
+      override def transformStatement(stat: Statement)(owner: Symbol) =
+        super.transformStatement(stat)(owner) match
+          case stat: ClassDef if isMultitierModule(stat.symbol) =>
+            val processed =
+              if !skip then
+                processingPhases.foldLeft(stat): (stat, process) =>
+                  val processed = process(stat)
+                  symbolTree(processed.symbol) = processed
+                  processed
+              else
+                stat
+
+            APIExtraction.extractAPI(processed)
+            processed
+
+          case stat =>
+            stat
     end Processor
 
     tree match

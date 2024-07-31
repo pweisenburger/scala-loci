@@ -61,7 +61,7 @@ trait Placements:
         case AppliedType(tycon, args @ List(AppliedType(_, List(peerType)), _)) if tycon.typeSymbol == symbols.contextFunction1 && args.head <:< types.context =>
           placementInfo(args.last) collect:
             case placementInfo if placementInfo.peerType =:= peerType && !placementInfo.canonical => placementInfo
-        case tpe =>
+        case _ =>
           placementInfo(tpe)
     end apply
   end PlacementInfo

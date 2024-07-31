@@ -193,7 +193,7 @@ trait PlacedBlocks:
           trySetContextResultCount(symbol, 1)
           SymbolMutator.getOrErrorAndAbort.enter(module.symbol, symbol)
 
-          val erased = Typed(Ref(symbols.erased), TypeTree.of(using embeddingType.asType))
+          val erased = Ref(symbols.erased).appliedToType(embeddingType)
 
           def erase(term: Term) = term match
             case Lambda(_, _) => Block(List(term), erased)
@@ -232,7 +232,7 @@ trait PlacedBlocks:
             .select(symbols.callApply)
             .appliedToTypes(List(remote, remote, placed, symbols.`embedding.on`.typeRef))
             .appliedTo(Ref(symbol).appliedToArgs(paramRefs).select(symbols.contextFunction1Apply).appliedTo('{ Placement.Context.fallback[peer.Type] }.asTerm))
-            .appliedTo(Ref(symbols.erased))
+            .appliedTo(Ref(symbols.erased).appliedToType(TypeRepr.of[Nothing]))
 
           val callAccess = access match
             case Some(term, _, typeApplies, apply, prefix, transmission, suffix) =>

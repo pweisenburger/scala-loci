@@ -12,15 +12,28 @@ infix type from[T, R] = PlacedValue.Resolution[R, T]
 infix type fromSingle[T, P] = Placed.Selection.Single[P, T]
 infix type fromMultiple[T, P] = Placed.Selection.Multiple[P, T]
 
+object Multitier:
+  @implicitNotFound("Expression can only be used in a multitier module.")
+  sealed trait Context
+
+  object Context:
+    @compileTimeOnly("Expression can only be used in a multitier module.")
+    given fallback: Context = erased
+  end Context
+
+  sealed trait nonplaced
+  infix type `type`[N >: nonplaced <: nonplaced, T] = Multitier.Context ?=> T
+end Multitier
+
 object Placement:
-  @implicitNotFound("Expression must be placed on a peer")
+  @implicitNotFound("Expression must be placed on a peer.")
   sealed trait Context[+P]:
     private[Context] type Peer = P @uncheckedVariance
 
   object Context:
     type Resolution[P] = Context[P] { type Peer = P }
 
-    @compileTimeOnly("Expression must be placed on a peer")
+    @compileTimeOnly("Expression must be placed on a peer.")
     given fallback[P]: Resolution[P] = erased
   end Context
 end Placement

@@ -15,7 +15,7 @@ object PlacedValueSynthesis:
 
 @experimental
 trait PlacedValueSynthesis:
-  this: Component & Commons & Annotations & SymbolTrees & Placements & Peers =>
+  this: Component & Commons & Annotations & SymbolTrees & Placements & NonPlacements & Peers =>
   import quotes.reflect.*
 
   case class SynthesizedPlacedValues(symbol: Symbol, module: Symbol, peer: Symbol, parents: List[TypeRepr])
@@ -62,14 +62,21 @@ trait PlacedValueSynthesis:
         updateSymbolAnnotationWithTree(to, tree)
   end copyAnnotations
 
-  private def erasePlacementType(info: TypeRepr) =
-    PlacementInfo(info.resultType).fold(info -> defn.AnyClass): placementInfo =>
-      val erasedInfo = placementInfo.modality match
-        case Modality.Subjective(peerType) =>
-          info.withResultType(symbols.function1.typeRef.appliedTo(List(symbols.remote.typeRef.appliedTo(peerType), placementInfo.valueType)))
-        case _ =>
-          info.withResultType(placementInfo.valueType)
-      erasedInfo -> placementInfo.peerType.typeSymbol
+  private def erasePlacementAndNonPlacementType(info: TypeRepr) =
+    PlacementInfo(info.resultType) match
+      case Some(placementInfo) =>
+        val erasedInfo = placementInfo.modality match
+          case Modality.Subjective(peerType) =>
+            info.withResultType(symbols.function1.typeRef.appliedTo(List(symbols.remote.typeRef.appliedTo(peerType), placementInfo.valueType)))
+          case _ =>
+            info.withResultType(placementInfo.valueType)
+        erasedInfo -> placementInfo.peerType.typeSymbol
+      case _ =>
+        NonPlacementInfo(info.resultType) match
+          case Some(nonPlacementInfo) =>
+            info.withResultType(nonPlacementInfo.valueType) -> defn.AnyClass
+          case _ =>
+            info -> defn.AnyClass
 
   private object multitierModuleTypeUnlifter extends TypeMap(quotes):
     private var nestedInAugmentation = false
@@ -156,15 +163,15 @@ trait PlacedValueSynthesis:
               s"<placed private ${symbol.name.dropRight(2)} of ${fullName(symbol.owner)}>_="
             else
               symbol.name
-          val (info, _) = erasePlacementType(paramType)
+          val (info, _) = erasePlacementAndNonPlacementType(paramType)
           (name, MethodType(List(paramName))(_ => List(info), _ => resultType), defn.AnyClass)
         case tpe =>
           if isMultitierModule(symbol) then
             (symbol.name, multitierModuleTypeUnlifter.transform(tpe), defn.AnyClass)
           else
             val name = if symbol.flags is Flags.Private then s"<placed private ${symbol.name} of ${fullName(symbol.owner)}>" else symbol.name
-            val (info, peer) = erasePlacementType(symbol.info)
-            (name, info, peer)
+            val (info, peer) = erasePlacementAndNonPlacementType(symbol.info)
+            (name, if hasSyntheticMultitierContextArgument(symbol) then dropLastArgumentList(info) else info, peer)
 
     val universalValues = synthesizedPlacedValues(symbol.owner, defn.AnyClass).symbol
     val placedValues = synthesizedPlacedValues(symbol.owner, peer).symbol

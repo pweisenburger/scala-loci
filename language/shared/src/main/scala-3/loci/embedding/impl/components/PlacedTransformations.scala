@@ -24,35 +24,66 @@ trait PlacedTransformations:
     transformBody(term, List(owner))
   end transformBody
 
-  private def processPlacedBody(term: Term, transform: Option[(Symbol, Term, Term) => (Term, Option[Term])]) =
+  private def processPlacementBody(term: Term, transform: Option[(Symbol, Term, Option[Term]) => (Term, Option[Term])]) =
     def dropLastExpr(block: Block) = block.statements match
       case (term: Term) +: Nil => (term, false)
       case statements :+ (term: Term) => (Block.copy(block)(statements, term), false)
       case statements => (Block.copy(block)(statements, Literal(UnitConstant())), true)
 
-    def appendExpr(original: Block)(term: Term, expr: Term, dropCoercedUnit: Boolean) = term match
-      case Lambda(_, _) => Block.copy(original)(List(term), expr)
+    def appendExpr(original: Option[Block])(term: Term, expr: Term, dropCoercedUnit: Boolean) = term match
+      case Lambda(_, _) => original.fold(Block(List(term), expr)) { Block.copy(_)(List(term), expr) }
       case block @ Block(statements, Literal(UnitConstant())) if dropCoercedUnit => Block.copy(block)(statements, expr)
       case block @ Block(statements, _) => Block.copy(block)(statements :+ block.expr, expr)
-      case _ => Block.copy(original)(List(term), expr)
+      case _ => original.fold(Block(List(term), expr)) { Block.copy(_)(List(term), expr) }
 
     term match
-      case Block(List(lambda @ DefDef(name, args @ List(TermParamClause(List(arg))), tpt, Some(block @ Block(_, erased: Typed)))), closure: Closure)
-          if arg.symbol.isImplicit &&
-             !(arg.symbol.info =:= TypeRepr.of[Nothing]) && arg.symbol.info <:< types.context &&
-             erased.tpe.typeSymbol == symbols.`embedding.on` =>
+      case Lambda(List(arg), block @ Block(_, erased: TypeApply))
+        if arg.symbol.isImplicit &&
+           !(arg.symbol.info =:= TypeRepr.of[Nothing]) &&
+           arg.symbol.info <:< types.context &&
+           erased.tpe.typeSymbol == symbols.`embedding.on` =>
+        val Block(List(lambda @ DefDef(name, args, tpt, _)), closure) = term: @unchecked
         val (body, unitCoersionInserted) = dropLastExpr(block)
         transform.fold(body): transform =>
-          val (rhs, expr) = transform(lambda.symbol, body, erased)
-          Block.copy(term)(List(DefDef.copy(lambda)(name, args, tpt, Some(expr.fold(rhs) { appendExpr(block)(rhs, _, unitCoersionInserted) }))), closure)
+          val (rhs, expr) = transform(lambda.symbol, body, Some(erased))
+          Block.copy(term)(List(DefDef.copy(lambda)(name, args, tpt, Some(expr.fold(rhs) { appendExpr(Some(block))(rhs, _, unitCoersionInserted) }))), closure)
+
+      case Lambda(List(arg), body)
+        if arg.symbol.isImplicit &&
+           !(arg.symbol.info =:= TypeRepr.of[Nothing]) &&
+           arg.symbol.info <:< types.multitierContext =>
+        val Block(List(lambda @ DefDef(name, args, tpt, _)), closure) = term: @unchecked
+        transform.fold(body): transform =>
+          val (rhs, expr) = transform(lambda.symbol, body, None)
+          Block.copy(term)(List(DefDef.copy(lambda)(name, args, tpt, Some(expr.fold(rhs) { appendExpr(None)(rhs, _, dropCoercedUnit = false) }))), closure)
+
       case _ =>
         errorAndCancel("Unexpected shape of placed expression.", term.posInUserCode)
         term
-  end processPlacedBody
+  end processPlacementBody
 
-  def transformPlacedBody(term: Term)(transform: (Symbol, Term, Term) => (Term, Option[Term])): Term =
-    processPlacedBody(term, Some(transform))
+  def transformPlacementBody(term: Term)(transform: (Symbol, Term, Option[Term]) => (Term, Option[Term])): Term =
+    processPlacementBody(term, Some(transform))
 
-  def extractPlacedBody(term: Term): Term =
-    processPlacedBody(term, None)
+  def extractPlacementBody(term: Term): Term =
+    processPlacementBody(term, None)
+
+  private object contextVariableCleaner extends SafeTreeMap(quotes):
+    private def fallbackIfContextType(term: Term) = term.tpe.asType match
+      case '[ Nothing ] | '[ Null ] => term
+      case '[ embedding.Placement.Context[p] ] => '{ embedding.Placement.Context.fallback[p] }.asTerm
+      case '[ embedding.Multitier.Context ] => '{ embedding.Multitier.Context.fallback }.asTerm
+      case _ => term
+    override def transformTerm(term: Term)(owner: Symbol) = term match
+      case Ident(_) =>
+        fallbackIfContextType(term)
+      case _ =>
+        if (symbols.context.methodMember(term.symbol.name) contains term.symbol) ||
+           (symbols.multitierContext.methodMember(term.symbol.name) contains term.symbol) then
+          fallbackIfContextType(term)
+        else
+          super.transformTerm(term)(owner)
+
+  def clearContextVariables(expr: Term)(owner: Symbol): Term =
+    contextVariableCleaner.transformTerm(expr)(owner)
 end PlacedTransformations

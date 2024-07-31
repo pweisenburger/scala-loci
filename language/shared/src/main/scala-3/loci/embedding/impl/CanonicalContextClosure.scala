@@ -14,27 +14,36 @@ def inferrableCanonicalPlacementTypeContextClosure[T: Type, R: Type](using Quote
   import quotes.reflect.*
   import info.*
 
-  object info extends Component.withQuotes(quotes), Commons, Placements
+  object info extends Component.withQuotes(quotes), Commons, Placements, ErrorReporter, PlacedTransformations
 
-//  object NestedPlacementExpression:
-//    def unapply(term: Term): Option[(ValDef, Tree, Term)] = term match
-//      case Inlined(_, List(), Block(List(evidence: ValDef), Inlined(_, List(), Block(List(), expr @ Inlined(Some(call), _, _))))) =>
-//        Some(evidence, call, expr)
-//      case Inlined(_, List(), Block(List(evidence: ValDef), Inlined(_, List(), expr @ Inlined(Some(call), _, _)))) =>
-//        Some(evidence, call, expr)
-//      case Inlined(_, List(), Block(List(evidence: ValDef), Block(List(), expr @ Inlined(Some(call), _, _)))) =>
-//        Some(evidence, call, expr)
-//      case Inlined(_, List(), Block(List(evidence: ValDef), expr @ Inlined(Some(call), _, _))) =>
-//        Some(evidence, call, expr)
-//      case _ =>
-//        None
-//
-//  object SyntheticContextParameter:
-//    def unapply(term: Term): Option[(ValDef, Term)] = term match
-//      case Inlined(_, List(), Block(List(evidence: ValDef), body)) =>
-//        Some(evidence, body)
-//      case _ =>
-//        None
+  object PlacementContext:
+    private inline def checkedEvidence(evidence: ValDef, expr: Term) =
+      Option.when(!(evidence.tpt.tpe =:= TypeRepr.of[Nothing]) && evidence.tpt.tpe <:< types.context) { (evidence, expr) }
+
+    def unapply(term: Term): Option[(ValDef, Term)] = term match
+      case Inlined(_, List(), Block(List(evidence: ValDef), Inlined(_, List(), expr))) => checkedEvidence(evidence, expr)
+      case Inlined(_, List(), Block(List(evidence: ValDef), expr)) => checkedEvidence(evidence, expr)
+      case Block(List(evidence: ValDef), Inlined(_, List(), expr)) => checkedEvidence(evidence, expr)
+      case Block(List(evidence: ValDef), expr) => checkedEvidence(evidence, expr)
+      case _ => None
+  end PlacementContext
+
+  object NestedPlacementExpression:
+    private inline def checkedCall(call: Tree, expr: Term) =
+      Option.when(call.symbol.hasAncestor(symbols.on, symbols.on.companionModule.moduleClass)) { expr }
+
+    def unapply(term: Term): Option[Term] = term match
+      case Inlined(_, List(), Block(List(), expr @ Inlined(Some(call), _, _))) => checkedCall(call, expr)
+      case Inlined(_, List(), expr @ Inlined(Some(call), _, _)) => checkedCall(call, expr)
+      case Block(List(), expr @ Inlined(Some(call), _, _)) => checkedCall(call, expr)
+      case expr @ Inlined(Some(call), _, _) => checkedCall(call, expr)
+      case _ => None
+  end NestedPlacementExpression
+
+  def makeContextFunction[T: Type, R: Type](owner: Symbol, tpe: TypeRepr, body: Term) =
+      val block @ Block(List(lambda: DefDef), closure @ Closure(meth, _)) =
+        Lambda(owner, contextMethodType[T, R], (symbol, _) => body.changeOwner(symbol)): @unchecked
+      Block.copy(block)(List(lambda), Closure.copy(closure)(meth, Some(tpe)))
 
   def namedOwner(symbol: Symbol) =
     symbol findAncestor { symbol => !symbol.isAnonymousFunction } getOrElse symbol
@@ -64,18 +73,15 @@ def inferrableCanonicalPlacementTypeContextClosure[T: Type, R: Type](using Quote
 
   val terms = v.toList map { _.asTerm }
 
-//  val result = terms match
-//    case List(NestedPlacementExpression(evidence, call, expr))
-//      if !(evidence.tpt.tpe =:= TypeRepr.of[Nothing]) &&
-//         evidence.tpt.tpe <:< types.context &&
-//         call.symbol.hasAncestor(symbols.on, symbols.on.companionModule.moduleClass) =>
-//      expr
-//    case _ =>
-//      val tpe = canonical(clean(TypeRepr.of[R]))
-//      Block(terms, Typed(Ref(info.symbols.erased), TypeTree.of(using tpe.asType)))
+  val term = terms.head
 
-  val tpe = canonical(clean(TypeRepr.of[R]))
-  val result = Block(terms, Typed(Ref(info.symbols.erased), TypeTree.of(using tpe.asType)))
+  val (result, syntheticWithoutNestedPlacementExpression) = term match
+    case PlacementContext(_, NestedPlacementExpression(expr)) =>
+      (clearContextVariables(expr)(Symbol.spliceOwner),
+       None)
+    case PlacementContext(evidence, expr) =>
+      (Block(terms, Ref(symbols.erased).appliedToType(canonical(clean(TypeRepr.of[R])))),
+       Option.when((evidence.symbol.flags is Flags.Synthetic) && evidence.name == "<synthetic context>") { expr })
 
   val r = result.tpe
 
@@ -92,7 +98,7 @@ def inferrableCanonicalPlacementTypeContextClosure[T: Type, R: Type](using Quote
   // Hence, no further type-checking will happen in the current context.
   try
     r match
-      case AppliedType(fun, typeArgs @ List(_, peer)) if fun.typeSymbol == symbols.`embedding.on` =>
+      case AppliedType(fun, typeArgs @ List(value, peer)) if fun.typeSymbol == symbols.`embedding.on` =>
         val symbol = namedOwner(Symbol.spliceOwner.owner)
 
         if (symbol.isDefDef || symbol.isValDef) && !symbol.isLocalDummy && symbol.owner.isClassDef && isMultitierModule(symbol.owner) then
@@ -113,6 +119,7 @@ def inferrableCanonicalPlacementTypeContextClosure[T: Type, R: Type](using Quote
           val owner = freshContextClass.getMethod("owner")
           val setMode = freshContextClass.getMethod("setMode", classOf[Int])
           val denot = symbolClass.getMethod("denot", contextClass)
+          val rawParamss = symDenotationClass.getMethod("rawParamss")
           val infoOrCompleter = symDenotationClass.getMethod("infoOrCompleter")
           val original = completerClass.getMethod("original")
           val contains = sourcePositionClass.getMethod("contains", sourcePositionClass)
@@ -123,7 +130,13 @@ def inferrableCanonicalPlacementTypeContextClosure[T: Type, R: Type](using Quote
 
           val context = ctx.invoke(quotes)
           val pattern = modeClass.getMethod("Pattern").invoke(null)
-          val completer = infoOrCompleter.invoke(denot.invoke(symbol, context))
+          val denotation = denot.invoke(symbol, context)
+          val paramss = rawParamss.invoke(denotation)
+          val completer = infoOrCompleter.invoke(denotation)
+
+          val hasNoParams = paramss match
+            case paramss: List[?] => paramss.isEmpty
+            case _ => false
 
           object singletonTypeChecker extends TypeMap(quotes):
             override def transform(tpe: TypeRepr) = tpe match
@@ -142,7 +155,7 @@ def inferrableCanonicalPlacementTypeContextClosure[T: Type, R: Type](using Quote
           // check whether the type of the surrounding val or def is still to be inferred
           if completerClass.isInstance(completer) then
             val rhs = unforcedRhs.invoke(original.invoke(completer))
-            val term =
+            val rhsTerm =
               if blockClass.isInstance(rhs) then
                 stats.invoke(rhs) match
                   case stats: List[?] if stats.isEmpty => expr.invoke(rhs)
@@ -151,20 +164,31 @@ def inferrableCanonicalPlacementTypeContextClosure[T: Type, R: Type](using Quote
                 rhs
 
             // check whether the expanding function is the outer-most in the surrounding val or def
-            if contains.invoke(Position.ofMacroExpansion, sourcePos.invoke(term, context)) == true then
+            if contains.invoke(Position.ofMacroExpansion, sourcePos.invoke(rhsTerm, context)) == true then
               outersIterator.invoke(context) match
                 case outers: Iterator[?] =>
                   outers foreach: context =>
                     if freshContextClass.isInstance(context) && (owner.invoke(context) eq symbol) then
                       setMode.invoke(context, pattern)
 
-                  val block @ Block(List(lambda: DefDef), closure @ Closure(meth, _)) =
-                    (r.asType, peer.asType) match
-                      case ('[ r ], '[ p ]) =>
-                        Lambda(symbol, contextMethodType[Placement.Context[p], r], (symbol, _) => result.changeOwner(symbol)): @unchecked
+                  syntheticWithoutNestedPlacementExpression match
+                    case Some(expr) if hasNoParams =>
+                      val tpe = symbols.nonplacedType.typeRef.appliedTo(List(types.nonplaced, value))
+                      value.asType match
+                        case '[ v ] => makeContextFunction[embedding.Multitier.Context, v](symbol, tpe, expr).asExpr match
+                          case result: Expr[R] @unchecked => return result
 
-                  Block.copy(block)(List(lambda), Closure.copy(closure)(meth, Some(symbols.`language.on`.typeRef.appliedTo(typeArgs)))).asExpr match
-                    case result: Expr[R] @unchecked => return result
+                    case Some(expr) =>
+                      term.asExpr match
+                        case result: Expr[R] @unchecked => return result
+
+                    case _ =>
+                  end match
+
+                  val tpe = symbols.`language.on`.typeRef.appliedTo(typeArgs)
+                  (peer.asType, r.asType) match
+                    case ('[ p ], '[ r ]) => makeContextFunction[embedding.Placement.Context[p], r](symbol, tpe, result).asExpr match
+                      case result: Expr[R] @unchecked => return result
 
                 case _ =>
             end if
@@ -191,5 +215,6 @@ def inferrableCanonicalPlacementTypeContextClosure[T: Type, R: Type](using Quote
   catch
     case NonFatal(e) if e.getClass.getCanonicalName != "scala.quoted.runtime.StopMacroExpansion" =>
 
-  Block(terms, Typed(Ref(info.symbols.erased), TypeTree.of[R])).asExprOf[R]
+  result.asExpr match
+    case result: Expr[R] @unchecked => result
 end inferrableCanonicalPlacementTypeContextClosure

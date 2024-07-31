@@ -36,6 +36,8 @@ trait Commons:
     val from = Symbol.requiredPackage("loci.embedding").typeMember("from")
     val fromSingle = Symbol.requiredPackage("loci.embedding").typeMember("fromSingle")
     val fromMultiple = Symbol.requiredPackage("loci.embedding").typeMember("fromMultiple")
+    val nonplaced = Symbol.requiredModule("loci.embedding.Multitier").typeMember("nonplaced")
+    val nonplacedType = Symbol.requiredModule("loci.embedding.Multitier").typeMember("type")
     val base = TypeRepr.of[transmitter.Transmittable.Any[?, ?, ?]].typeSymbol.typeMember("Base")
     val intermediate = TypeRepr.of[transmitter.Transmittable.Any[?, ?, ?]].typeSymbol.typeMember("Intermediate")
     val result = TypeRepr.of[transmitter.Transmittable.Any[?, ?, ?]].typeSymbol.typeMember("Result")
@@ -65,6 +67,7 @@ trait Commons:
     val optional = TypeRepr.of[language.Optional[?]].typeSymbol
     val multiple = TypeRepr.of[language.Multiple[?]].typeSymbol
     val context = TypeRepr.of[Placement.Context.type].typeSymbol
+    val multitierContext = TypeRepr.of[embedding.Multitier.Context.type].typeSymbol
     val delegates = TypeRepr.of[transmitter.Transmittables.Delegates[?]].typeSymbol
     val message = TypeRepr.of[transmitter.Transmittables.Message[?]].typeSymbol
     val none = TypeRepr.of[transmitter.Transmittables.None].typeSymbol
@@ -137,6 +140,8 @@ trait Commons:
     val from = symbols.from.typeRef.appliedTo(List(TypeBounds.empty, TypeBounds.empty))
     val fromSingle = symbols.fromSingle.typeRef.appliedTo(List(TypeBounds.empty, TypeBounds.empty))
     val fromMultiple = symbols.fromMultiple.typeRef.appliedTo(List(TypeBounds.empty, TypeBounds.empty))
+    val nonplaced = TypeRepr.of[embedding.Multitier.nonplaced]
+    val nonplacedType = TypeRepr.of[embedding.Multitier.`type`[embedding.Multitier.nonplaced, ?]]
     val single = TypeRepr.of[Tie.Single]
     val optional = TypeRepr.of[Tie.Optional]
     val multiple = TypeRepr.of[Tie.Multiple]
@@ -146,6 +151,8 @@ trait Commons:
     val subjective = TypeRepr.of[Placed.Subjective[?, ?]]
     val remote = TypeRepr.of[language.Remote[?]]
     val context = TypeRepr.of[Placement.Context[?]]
+    val multitierContext = TypeRepr.of[embedding.Multitier.Context]
+    val placedContext = TypeRepr.of[embedding.On.Placed.Context]
     val remoteRef = TypeRepr.of[transmitter.RemoteRef]
     val transmittable = TypeRepr.of[transmitter.Transmittable.Resolution[?, ?, ?, ?, ?]]
     val marshallable = TypeRepr.of[transmitter.Marshallable[?, ?, ?]]
@@ -272,6 +279,41 @@ trait Commons:
 
   def isMultitierNestedPath(symbol: Symbol): Boolean =
     symbol.exists && (isMultitierModule(symbol) || symbol.isModuleDef && isMultitierNestedPath(symbol.maybeOwner))
+
+  def hasSyntheticMultitierContextArgument(symbol: Symbol): Boolean =
+    symbol.paramSymss match
+      case _ :+ List(param) =>
+        isMultitierModule(symbol.maybeOwner) &&
+        param.isTerm &&
+        (param.flags is Flags.Synthetic) &&
+        !(param.info =:= TypeRepr.of[Nothing]) &&
+        param.info <:< types.multitierContext
+      case _ =>
+        false
+
+  def dropLastArgumentList(tpe: TypeRepr): TypeRepr =
+    inline def typeBounds(tpe: TypeRepr) = tpe match
+      case tpe: TypeBounds => tpe
+      case _ => TypeBounds(tpe, tpe)
+
+    def dropLastArgumentList(tpe: MethodOrPoly): TypeRepr = tpe match
+      case MethodType(paramNames, paramTypes, resultType: MethodOrPoly) =>
+        MethodType(paramNames)(
+          binder => paramTypes map { _.substituteParamRefs(tpe, binder) },
+          dropLastArgumentList(resultType).substituteParamRefs(tpe, _))
+      case PolyType(paramNames, paramBounds, resultType: MethodOrPoly) =>
+        PolyType(paramNames)(
+          binder => paramBounds map { param => typeBounds(param.substituteParamRefs(tpe, binder)) },
+          dropLastArgumentList(resultType).substituteParamRefs(tpe, _))
+      case MethodType(_, _, resultType) =>
+        resultType
+
+    tpe match
+      case tpe: MethodOrPoly => dropLastArgumentList(tpe) match
+        case tpe: MethodOrPoly => tpe
+        case tpe => ByNameType(tpe)
+      case _ => tpe
+  end dropLastArgumentList
 
   def isStablePath(term: Term): Boolean = term match
     case This(_) | Super(_, _) | Ident(_) => true

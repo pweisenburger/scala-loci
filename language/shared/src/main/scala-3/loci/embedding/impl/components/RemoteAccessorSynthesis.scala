@@ -22,7 +22,7 @@ object RemoteAccessorSynthesis:
 
 @experimental
 trait RemoteAccessorSynthesis:
-  this: Component & Commons & ErrorReporter & Placements & Peers & Annotations =>
+  this: Component & Commons & ErrorReporter & Placements & Peers & Annotations & SymbolTrees =>
   import quotes.reflect.*
 
   case class Accessors(
@@ -38,7 +38,7 @@ trait RemoteAccessorSynthesis:
   private val synthesizedPeerSignatureCache = RemoteAccessorSynthesis.synthesizedPeerSignatureCache match
     case cache: mutable.Map[(Symbol, Symbol), (Symbol, Symbol)] @unchecked => cache
   private val synthesizedAccessorsCache = RemoteAccessorSynthesis.synthesizedAccessorsCache match
-    case cache: mutable.Map[Symbol, Accessors] @unchecked => cache
+    case cache: mutable.Map[Symbol, (Accessors, Boolean)] @unchecked => cache
 
   def meaningfulArgumentType(tpe: TypeRepr) =
     tpe.typeSymbol != defn.UnitClass && tpe.typeSymbol != defn.NullClass && tpe.typeSymbol != defn.NothingClass
@@ -426,22 +426,23 @@ trait RemoteAccessorSynthesis:
 
   def synthesizeAccessors(symbol: Symbol): Accessors =
     val module = if symbol.moduleClass.exists then symbol.moduleClass else symbol
+    val originalTree = symbolOriginalTree(module)
+    val tree = originalTree orElse symbolTree(module)
 
-    synthesizedAccessorsCache.getOrElseUpdate(module, {
-      val tree =
-        try module.tree
-        catch case NonFatal(_) => Literal(NullConstant())
+    val accessors =
+      synthesizedAccessorsCache.get(module) collect:
+        case (accessors, hasOriginalTree) if originalTree.isEmpty || hasOriginalTree => accessors
 
-      val accessors =
-        tree match
-          case tree: ClassDef => synthesizeAccessorsFromTree(module, tree)
-          case _ => synthesizeAccessorsFromClass(module, classFileName(tree.symbol))
+    accessors getOrElse:
+      val accessors = tree match
+        case Some(tree: ClassDef) => synthesizeAccessorsFromTree(module, tree)
+        case _ => synthesizeAccessorsFromClass(module, classFileName(module))
 
+      synthesizedAccessorsCache += module -> (accessors, originalTree.isDefined)
       if module.isModuleDef then
-        synthesizedAccessorsCache += module.companionModule -> accessors
+        synthesizedAccessorsCache += module.companionModule -> (accessors, originalTree.isDefined)
 
       accessors
-    })
   end synthesizeAccessors
 
   private def synthesizeAccessorsFromTree(module: Symbol, tree: ClassDef): Accessors =
@@ -484,8 +485,13 @@ trait RemoteAccessorSynthesis:
       val message = "Failed to generate accessor for"
 
       def signature(symbol: Symbol) =
+        val paramSymss =
+          if hasSyntheticMultitierContextArgument(symbol) then
+            symbol.paramSymss.init
+          else
+            symbol.paramSymss
         val args =
-          symbol.paramSymss map: params =>
+          paramSymss map: params =>
             val args = params map: param =>
               param.info match
                 case TypeBounds(low, hi) if low.typeSymbol == defn.NothingClass && hi.typeSymbol == defn.AnyClass => param.name
@@ -611,7 +617,12 @@ trait RemoteAccessorSynthesis:
 
           val value = PlacementInfo(tpt.tpe) collect:
             case placementInfo if !placementInfo.modality.local =>
-              val params = stat.symbol.paramSymss collect:
+              val (paramSymss, info) =
+                if hasSyntheticMultitierContextArgument(stat.symbol) then
+                  (stat.symbol.paramSymss.init, dropLastArgumentList(stat.symbol.info))
+                else
+                  (stat.symbol.paramSymss, stat.symbol.info)
+              val params = paramSymss collect:
                 case params if params.isEmpty || params.head.isTerm => params map { _.info }
 
               val prolog = () =>
@@ -631,7 +642,7 @@ trait RemoteAccessorSynthesis:
 
               (Some(stat.symbol),
                accessorSignature(name, params, placementInfo.valueType),
-               stat.symbol.info.withResultType(placementInfo.valueType),
+               info.withResultType(placementInfo.valueType),
                prolog)
           end value
 
@@ -716,12 +727,17 @@ trait RemoteAccessorSynthesis:
                 if !placementInfo.modality.local then
                   overridden ++= decl.allOverriddenSymbols
                   Option.when(accessorGeneration == Forced || !(inheritedPlacedAccessors contains decl)):
+                    val (paramSymss, info) =
+                      if hasSyntheticMultitierContextArgument(decl) then
+                        (decl.paramSymss.init, dropLastArgumentList(tpe))
+                      else
+                        (decl.paramSymss, tpe)
                     val name = targetName(decl)
-                    val params = decl.paramSymss collect:
+                    val params = paramSymss collect:
                       case params if params.isEmpty || params.head.isTerm => params map { _.info }
                     (Some(decl),
                      accessorSignature(name, params, placementInfo.valueType),
-                     tpe.withResultType(placementInfo.valueType),
+                     info.withResultType(placementInfo.valueType),
                      () => accessorGenerationFailureMessageProlog(symbolForName = Some(decl), symbolForParent = Some(decl), noninheritedPosition = None))
                 else
                   None

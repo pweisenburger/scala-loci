@@ -10,7 +10,7 @@ import scala.collection.mutable
 
 @experimental
 trait Invocation:
-  this: Component & Commons & ErrorReporter & Placements & Peers & AccessPath & PlacedValueSynthesis & RemoteAccessorSynthesis =>
+  this: Component & Commons & ErrorReporter & Placements & NonPlacements & Peers & AccessPath & PlacedValueSynthesis & RemoteAccessorSynthesis =>
   import quotes.reflect.*
 
   private def name(symbol: Symbol) =
@@ -39,6 +39,8 @@ trait Invocation:
   end accessPath
 
   private def insideApplications(term: Term)(f: Term => Option[Term]): Option[Term] = term match
+    case NonPlacedArgumentApplication(fun) =>
+      insideApplications(fun)(f)
     case TypeApply(fun, args) =>
       insideApplications(fun)(f) map { TypeApply.copy(term)(_, args) }
     case Apply(fun, args) =>
@@ -351,21 +353,26 @@ trait Invocation:
                   case Some(placed) =>
                     synthesizeAllPeerSignatures(path.symbol).get(remote.typeSymbol) match
                       case Some(signature) =>
+                        val args =
+                          if hasSyntheticMultitierContextArgument(reference.symbol) then
+                            arguments.init
+                          else
+                            arguments
                         Some(
                           Select.unique(This(synthesizedPlacedValues(module, peerType.typeSymbol).symbol), names.system),
                           path.select(placed),
                           path.select(signature),
-                          if arguments.isEmpty then Literal(UnitConstant())
-                          else if arguments.sizeIs == 1 then arguments.head
-                          else Tuple(arguments map { transformTerm(_)(owner) }))
+                          if args.isEmpty then Literal(UnitConstant())
+                          else if args.sizeIs == 1 then args.head
+                          else Tuple(args map { transformTerm(_)(owner) }))
                       case _ =>
                         errorAndCancel("Unexpected remote access to value on peer without a signature.", term.posInUserCode.endPosition)
                         None
                   case _ =>
                     errorAndCancel("Unexpected remote access to placed value without an accessor.", term.posInUserCode.endPosition)
                     None
-              else
-                None
+            else
+              None
           end remoteAccessArguments
 
           term match
@@ -477,7 +484,7 @@ trait Invocation:
                     else
                       transformedExpr.select(symbols.function1Apply).appliedTo(transformedRemote)
 
-            // placed values on the same peer
+            // placed value access on the same peer
             case PlacedValueReference(reference, placementInfo) =>
               val expr = insideApplications(reference): term =>
                 if !(peerType <:< placementInfo.peerType) then
@@ -496,8 +503,18 @@ trait Invocation:
 
               transformTermSkippingExpectedPlacedValues(expr getOrElse term)(owner)
 
-            // non-placed values in multitier modules
-            case _ =>
+            // non-placed value access in multitier modules with non-placed context argument
+            case NonPlacedArgumentApplication(fun) =>
+              transformTerm(fun)(owner)
+
+            // non-placed value access in multitier modules with non-placed context function return type
+            case NonPlacedValueReference(reference, _) =>
+              val expr = insideApplications(reference): term =>
+                peerAccessPath(term, necessarilyPlaced = false)
+              transformTermSkippingExpectedPlacedValues(expr getOrElse term)(owner)
+
+            // non-placed value access in multitier modules without non-placed context function type
+            case _: Ref =>
               if PlacementInfo(term.tpe.widenTermRefByName.resultType).isEmpty then
                 val multitierNestedPath = term match
                   case This(_) | Super(_, _) => false
@@ -505,6 +522,9 @@ trait Invocation:
                 transformTermSkippingExpectedPlacedValues(peerAccessPath(term, multitierNestedPath) getOrElse term)(owner)
               else
                 transformTermSkippingExpectedPlacedValues(term)(owner)
+
+            case _ =>
+              transformTermSkippingExpectedPlacedValues(term)(owner)
       else
         term
     end transformTerm

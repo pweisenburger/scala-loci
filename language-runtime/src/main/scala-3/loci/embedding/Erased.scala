@@ -1,6 +1,6 @@
 package loci
 package embedding
 
-def erased: Nothing = erased()
-def erased(ev: Any*): Nothing =
+def erased[T]: T = erased()
+def erased[T](ev: Any*): T =
   throw new NotImplementedError("Erased language constructs should never be used")
