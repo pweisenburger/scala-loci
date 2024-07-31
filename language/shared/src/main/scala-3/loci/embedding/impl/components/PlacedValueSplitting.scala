@@ -13,6 +13,14 @@ trait PlacedValueSplitting:
   this: Component & Commons & Placements & NonPlacements & Peers & PlacedTransformations & PlacedStatements & PlacedValueSynthesis =>
   import quotes.reflect.*
 
+  private def nullOf(tpe: TypeRepr)(owner: Symbol) =
+    if tpe <:< TypeRepr.of[Nothing] then
+      val symbol = newMethod(owner, "nullOf", PolyType(List("T"))(_ => List(TypeBounds.empty), _.param(0)), Flags.Synthetic, Symbol.noSymbol)
+      val definition = DefDef(symbol, argss => Some(Literal(NullConstant()).select(symbols.asInstanceOf).appliedToTypeTrees(List(TypeIdent(argss.head.head.symbol)))))
+      Block(List(definition), Ref(symbol).appliedToType(tpe))
+    else
+      Literal(NullConstant()).select(symbols.asInstanceOf).appliedToType(tpe)
+
   private def synthesizePlacedDefinition(impl: Symbol, original: Statement, module: Symbol, peer: Symbol): ValDef | DefDef =
     val rhs = original match
       case stat: ValDef => stat.rhs
@@ -22,13 +30,7 @@ trait PlacedValueSplitting:
     val synthesizedBody = rhs map: rhs =>
       original match
         case _ if impl.owner != synthesizedPlacedValues(module, peer).symbol =>
-          val tpe = impl.info.resultType.substituteParamRefsByTermRefs(impl)
-          if tpe <:< TypeRepr.of[Nothing] then
-            val symbol = newMethod(impl, "nullOf", PolyType(List("T"))(_ => List(TypeBounds.empty), _.param(0)), Flags.Synthetic, Symbol.noSymbol)
-            val definition = DefDef(symbol, argss => Some(Literal(NullConstant()).select(symbols.asInstanceOf).appliedToTypeTrees(List(TypeIdent(argss.head.head.symbol)))))
-            Block(List(definition), Ref(symbol).appliedToType(tpe))
-          else
-            Literal(NullConstant()).select(symbols.asInstanceOf).appliedToType(impl.info.resultType.substituteParamRefsByTermRefs(impl))
+          nullOf(impl.info.resultType.substituteParamRefsByTermRefs(impl))(impl)
         case PlacedStatement(_) | NonPlacedStatement(_) =>
           extractPlacementBody(rhs).changeOwner(impl)
         case _ =>
@@ -53,7 +55,7 @@ trait PlacedValueSplitting:
         self + (symbol -> (stats.toList ++ self.getOrElse(symbol, List.empty)))
 
     val placedBodies = module.body.foldLeft(Map.empty[Symbol, List[Statement]]):
-      case (bodies, stat @ (_: ValDef | _: DefDef)) if !stat.symbol.isModuleDef =>
+      case (bodies, stat @ (_: ValDef | _: DefDef)) if synthesizeMember(stat.symbol) =>
         synthesizedDefinitions(stat.symbol).fold(bodies): definitions =>
           val peer = PlacementInfo(stat.symbol.info.widenTermRefByName.resultType).fold(defn.AnyClass) { _.peerType.typeSymbol }
 
@@ -69,7 +71,7 @@ trait PlacedValueSplitting:
           definitions.impls.foldLeft(bodiesWithBinding): (bodies, impl) =>
             bodies.prepended(impl.owner)(synthesizePlacedDefinition(impl, stat, module.symbol, peer))
 
-      case (bodies, stat: ClassDef) =>
+      case (bodies, stat: ClassDef) if synthesizeMember(stat.symbol) =>
         synthesizedDefinitions(stat.symbol).fold(bodies): nestedModule =>
           bodies.prepended(nestedModule.binding.owner)(ValDef(nestedModule.binding, None))
 
@@ -115,8 +117,7 @@ trait PlacedValueSplitting:
 
     def eraseBody(stat: Definition, term: Term) =
       transformBody(term, stat.symbol): (expr, owners) =>
-        val tpe = owners.foldLeft(expr.tpe) { _.substituteParamRefsByTermRefs(_) }
-        Literal(NullConstant()).select(symbols.asInstanceOf).appliedToType(tpe)
+        nullOf(owners.foldLeft(expr.tpe) { _.substituteParamRefsByTermRefs(_) })(owners.head)
 
     val body = module.body flatMap:
       case stat @ ValDef(name, tpt, rhs) if !stat.symbol.isModuleDef =>

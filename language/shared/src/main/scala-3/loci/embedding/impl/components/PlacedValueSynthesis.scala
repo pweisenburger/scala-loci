@@ -45,7 +45,7 @@ trait PlacedValueSynthesis:
       SymbolMutator.getOrErrorAndAbort.enter(owner, symbol)
       symbol
 
-  private def copyAnnotations(from: Symbol, to: Symbol, decrementContextResultCount: Boolean) =
+  private def copyAnnotations(from: Symbol, to: Symbol, decrementContextResultCount: Boolean, sameTargetName: Boolean) =
     def updateSymbolAnnotationWithTree(symbol: Symbol, tree: Tree): Unit =
       SymbolMutator.get.fold(
         report.warning("Annotations in multitier modules are ignored with current compiler version.", from.annotations.head.posInUserCode)):
@@ -58,6 +58,18 @@ trait PlacedValueSynthesis:
            fun.symbol.owner == symbols.contextResultCount =>
         if count > 1 then
           updateSymbolAnnotationWithTree(to, Apply.copy(tree)(fun, List(Literal.copy(arg)(IntConstant(count - 1)))))
+
+      case Apply(fun, List(arg @ Literal(StringConstant(message))))
+        if fun.symbol.isClassConstructor &&
+           fun.symbol.owner == symbols.compileTimeOnly &&
+           (message == MultitierPreprocessor.illegalPlacedValueAccessMessage ||
+            message == MultitierPreprocessor.illegalObjectMemberAccessMessage) =>
+
+      case Apply(fun, List(_))
+        if fun.symbol.isClassConstructor &&
+           fun.symbol.owner == symbols.targetName &&
+           !sameTargetName =>
+
       case tree =>
         updateSymbolAnnotationWithTree(to, tree)
   end copyAnnotations
@@ -183,7 +195,7 @@ trait PlacedValueSynthesis:
 
       val universal = universalValues.fieldMember(universalName) orElse:
         val universal = newVal(universalValues, universalName, info, flags, Symbol.noSymbol)
-        copyAnnotations(symbol, universal, decrementContextResultCount)
+        copyAnnotations(symbol, universal, decrementContextResultCount, sameTargetName = true)
         universal
 
       val definition =
@@ -191,7 +203,7 @@ trait PlacedValueSynthesis:
           if symbol.isMethod then
             val placed = placedValues.methodMember(universalName) find { _.info =:= info } getOrElse:
               val placed = newMethod(placedValues, universalName, info, flags | Flags.Synthetic | Flags.Override, Symbol.noSymbol)
-              copyAnnotations(symbol, placed, decrementContextResultCount)
+              copyAnnotations(symbol, placed, decrementContextResultCount, sameTargetName = true)
               placed
             SynthesizedDefinitions(symbol, universal, None, List(placed))
           else
@@ -202,7 +214,7 @@ trait PlacedValueSynthesis:
 
             val placedInit = placedValues.fieldMember(placedName) orElse:
               val placedInit = newMethod(placedValues, placedName, methodType, Flags.Synthetic | Flags.Override, Symbol.noSymbol)
-              copyAnnotations(symbol, placedInit, decrementContextResultCount)
+              copyAnnotations(symbol, placedInit, decrementContextResultCount, sameTargetName = false)
               placedInit
 
             SynthesizedDefinitions(symbol, universal, Some(universalInit), List(placedInit))
@@ -276,6 +288,10 @@ trait PlacedValueSynthesis:
         None
     })
 
+  def synthesizeMember(symbol: Symbol): Boolean =
+    isMultitierNestedPath(symbol.maybeOwner) &&
+    (symbol.isTerm && !symbol.isModuleDef && !symbol.isParamAccessor || (symbol.isModuleDef && symbol.isClassDef))
+
   def synthesizedPlacedValues(symbol: Symbol): Option[SynthesizedPlacedValues] =
     synthesizedPlacedValuesCache.get(symbol)
 
@@ -335,7 +351,7 @@ trait PlacedValueSynthesis:
               symbolTree(module) match
                 case Some(ClassDef(_, _, _, _, body)) =>
                   body flatMap:
-                    case stat: Definition if !stat.symbol.isModuleDef || (stat.symbol.isModuleDef && stat.symbol.isClassDef) =>
+                    case stat: Definition if synthesizeMember(stat.symbol) =>
                       synthesizedDefinitions(stat.symbol).fold(List.empty): definitions =>
                         collectDeclarations(definitions.binding :: definitions.init.toList ++ definitions.impls)
                     case statement: Term =>
@@ -355,7 +371,7 @@ trait PlacedValueSynthesis:
             val decls =
               if declarations.isEmpty then
                 module.declarations flatMap: decl =>
-                  if !decl.isModuleDef || (decl.isModuleDef && decl.isClassDef) then
+                  if synthesizeMember(decl) then
                     synthesizedDefinitions(decl).fold(List.empty): definitions =>
                       collectDeclarations(definitions.binding :: definitions.init.toList ++ definitions.impls)
                   else

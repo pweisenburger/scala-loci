@@ -19,6 +19,11 @@ object MultitierPreprocessor:
   private inline val insertComileTimeOnlyForPlacedValues = false
   private inline val repreprocessNestedMultitierModules = false
 
+  val illegalPlacedValueAccessMessage =
+    "Access to abstraction only allowed on peers on which the abstraction is placed. Remote access must be explicit."
+  val illegalObjectMemberAccessMessage =
+    "Access to object member of multitier module not allowed."
+
   def preprocess(using Quotes): Expr[MultitierPreprocessor] =
     import quotes.reflect.*
 
@@ -288,12 +293,10 @@ object MultitierPreprocessor:
           typedSplice.invoke(null, tree, false, context)
 
         val placedValueCompileTimeOnlyAnnotation =
-          val message = "Access to abstraction only allowed on peers on which the abstraction is placed. Remote access must be explicit."
-          New(TypeIdent(compileTimeOnly)).select(compileTimeOnly.primaryConstructor).appliedTo(Literal(StringConstant(message)))
+          New(TypeIdent(compileTimeOnly)).select(compileTimeOnly.primaryConstructor).appliedTo(Literal(StringConstant(illegalPlacedValueAccessMessage)))
 
         val objectMemberCompileTimeOnlyAnnotation =
-          val message = "Access to object member of multitier module not allowed."
-          New(TypeIdent(compileTimeOnly)).select(compileTimeOnly.primaryConstructor).appliedTo(Literal(StringConstant(message)))
+          New(TypeIdent(compileTimeOnly)).select(compileTimeOnly.primaryConstructor).appliedTo(Literal(StringConstant(illegalObjectMemberAccessMessage)))
 
         val deferredAnnotation =
           New(TypeIdent(deferred)).select(deferred.primaryConstructor).appliedToNone
