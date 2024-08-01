@@ -187,6 +187,12 @@ trait PlacedStatements:
         s"but is $relation peer ${peerType.safeShow}",
         stat.posInUserCode.startPosition)
 
+  private def statementTypeTreeInfo(stat: Statement) = stat match
+    case ValDef(_, Inferred(), _) | DefDef(_, _, Inferred(), _) => (stat.posInUserCode.startPosition, true)
+    case ValDef(_, tpt, _) => (tpt.posInUserCode, false)
+    case DefDef(_, _, tpt, _) => (tpt.posInUserCode, false)
+    case _ => (stat.posInUserCode.startPosition, false)
+
   private def checkPlacementType(stat: Statement, bindings: List[Definition], placementInfo: PlacementInfo, module: ClassDef): Unit =
     val (statement, subjectiveStatement) = stat match
       case _: ValDef | _: DefDef => ("Placed definition", "Subjective placed definition")
@@ -194,40 +200,37 @@ trait PlacedStatements:
     checkPeerType(stat, placementInfo.peerType, module, statement, "placed on")
     placementInfo.modality.subjectivePeerType foreach { checkPeerType(stat, _, module, subjectiveStatement, "subjective to") }
 
-    val (pos, inferred) = stat match
-      case ValDef(_, Inferred(), _) | DefDef(_, _, Inferred(), _) => (stat.posInUserCode.startPosition, true)
-      case ValDef(_, tpt, _) => (tpt.posInUserCode, false)
-      case DefDef(_, _, tpt, _) => (tpt.posInUserCode, false)
-      case _ => (stat.posInUserCode.startPosition, false)
-
     val (placementConstructsBindings, hasNonSyntheticPlacedConstructBindings) = bindingsForPlacementConstructs(bindings)
     errorForNestedBindings(stat, placementConstructsBindings)
 
+    val (pos, inferred) = statementTypeTreeInfo(stat)
+
     if inferred && (bindings.isEmpty || hasNonSyntheticPlacedConstructBindings) then
       errorAndCancel(s"Placed expressions without type ascription must be enclosed in a placed block: on[${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)}]", pos)
-
-    object singletonTypeChecker extends TypeMap(quotes):
-      override def transform(tpe: TypeRepr) = tpe match
-        case _: TermRef if tpe.termSymbol hasAncestor isMultitierModule =>
-          errorAndCancel("Singleton types for values of multitier modules not supported", pos)
-          tpe
-        case _: NamedType =>
-          tpe
-        case _ =>
-          super.transform(tpe)
-
-    singletonTypeChecker.transform(placementInfo.valueType)
   end checkPlacementType
+
+  private class SingletonTypeChecker(stat: Statement) extends TypeMap(quotes):
+    override def transform(tpe: TypeRepr) = tpe match
+      case _: TermRef if tpe.termSymbol hasAncestor isMultitierModule =>
+        val (pos, _) = statementTypeTreeInfo(stat)
+        errorAndCancel("Singleton types for values of multitier modules are not supported.", pos)
+        tpe
+      case _: NamedType =>
+        tpe
+      case _ =>
+        super.transform(tpe)
 
   def normalizePlacedStatements(module: ClassDef): ClassDef =
     val body = module.body map:
       case stat @ ValDef(name, tpt, rhs) =>
+        SingletonTypeChecker(stat).transform(tpt.tpe)
         placementType(stat, tpt).fold(cleanSpuriousPlacementSyntax(stat)): placementInfo =>
           val (bindings, expr) = cleanPlacementSyntax(placementInfo, rhs)(stat.symbol)
           checkPlacementType(stat, bindings, placementInfo, module)
           ValDef.copy(stat)(name, tpt, expr)
 
       case stat @ DefDef(name, paramss, tpt, rhs) =>
+        SingletonTypeChecker(stat).transform(tpt.tpe)
         placementType(stat, tpt).fold(cleanSpuriousPlacementSyntax(stat)): placementInfo =>
           val (bindings, expr) = cleanPlacementSyntax(placementInfo, rhs)(stat.symbol)
           checkPlacementType(stat, bindings, placementInfo, module)

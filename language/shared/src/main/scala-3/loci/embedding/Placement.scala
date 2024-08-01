@@ -17,19 +17,19 @@ object On:
     transparent inline def apply[T, U](
         inline v: Placement.Context[P] ?=> T)(
         using PlacedClean[T, T, U]): U on P =
-      ${ impl.inferrableCanonicalPlacementTypeContextClosure[U, U on P]('{ v(using erased[Placement.Context[P]]) }) }
+      ${ impl.inferrableCanonicalPlacementTypeContextClosure[U on P]('{ v(using erased[Placement.Context[P]]) }) }
     transparent inline infix def local[T, U](
         inline v: Placement.Context[P] ?=> T)(
         using PlacedClean[T, T, U]): Local[U] on P =
-      ${ impl.inferrableCanonicalPlacementTypeContextClosure[U, Local[U] on P]('{ v(using erased[Placement.Context[P]]) }) }
+      ${ impl.inferrableCanonicalPlacementTypeContextClosure[Local[U] on P]('{ v(using erased[Placement.Context[P]]) }) }
     transparent inline infix def sbj[R, T, U](
         inline v: Placement.Context[P] ?=> Remote[R] => T)(
         using PlacedClean[T, T, U]): U per R on P =
-      ${ impl.inferrableCanonicalPlacementTypeContextClosure[Remote[R] => U, U per R on P]('{ v(using erased[Placement.Context[P]]) }) }
+      ${ impl.inferrableCanonicalPlacementTypeContextClosure[U per R on P]('{ v(using erased[Placement.Context[P]]) }) }
 
   trait Placed:
     transparent inline def apply[T, P](using Placed.Context)(using Placement.Context.Resolution[P])(inline v: Placement.Context[P] ?=> T): T on P =
-      ${ impl.inferrableCanonicalPlacementTypeContextClosure[T, T on P]('{ v(using erased[Placement.Context[P]](summon[Placed.Context])) }) }
+      ${ impl.inferrableCanonicalPlacementTypeContextClosure[T on P]('{ v(using erased[Placement.Context[P]](summon[Placed.Context])) }) }
 
   object Placed:
     sealed trait Context
@@ -39,11 +39,11 @@ end On
 @experimental
 trait On[P]:
   transparent inline def apply[T](inline v: Placement.Context[P] ?=> T): T on P =
-    ${ impl.inferrableCanonicalPlacementTypeContextClosure[T, T on P]('{ v(using erased[Placement.Context[P]]) }) }
+    ${ impl.inferrableCanonicalPlacementTypeContextClosure[T on P]('{ v(using erased[Placement.Context[P]]) }) }
   transparent inline infix def local[T](inline v: Placement.Context[P] ?=> T): Local[T] on P =
-    ${ impl.inferrableCanonicalPlacementTypeContextClosure[T, Local[T] on P]('{ v(using erased[Placement.Context[P]]) }) }
+    ${ impl.inferrableCanonicalPlacementTypeContextClosure[Local[T] on P]('{ v(using erased[Placement.Context[P]]) }) }
   transparent inline infix def sbj[R, T](inline v: Placement.Context[P] ?=> Remote[R] => T): T per R on P =
-    ${ impl.inferrableCanonicalPlacementTypeContextClosure[Remote[R] => T, T per R on P]('{ v(using erased[Placement.Context[P]]) }) }
+    ${ impl.inferrableCanonicalPlacementTypeContextClosure[T per R on P]('{ v(using erased[Placement.Context[P]]) }) }
 
 trait Select[Command[_, _[_, _]]]:
   def apply[P, Q, _on_[T, P] <: T on P](r: Remote[P] _on_ Q): Command[P, fromSingle] = erased

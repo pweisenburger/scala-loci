@@ -10,7 +10,7 @@ import scala.quoted.*
 import scala.util.control.NonFatal
 
 @experimental
-def inferrableCanonicalPlacementTypeContextClosure[T: Type, R: Type](using Quotes)(v: Expr[Any]*): Expr[R] =
+def inferrableCanonicalPlacementTypeContextClosure[R: Type](using Quotes)(v: Expr[Any]*): Expr[R] =
   import quotes.reflect.*
   import info.*
 
@@ -137,20 +137,6 @@ def inferrableCanonicalPlacementTypeContextClosure[T: Type, R: Type](using Quote
           val hasNoParams = paramss match
             case paramss: List[?] => paramss.isEmpty
             case _ => false
-
-          object singletonTypeChecker extends TypeMap(quotes):
-            override def transform(tpe: TypeRepr) = tpe match
-              case tpe: TermRef if
-                (tpe.termSymbol hasAncestor info.isMultitierModule) &&
-                (tpe.termSymbol hasAncestor: symbol =>
-                  !completerClass.isInstance(infoOrCompleter.invoke(denot.invoke(symbol, context))) && PlacementInfo(symbol.info).isDefined) =>
-                report.errorAndAbort("Singleton types for values of multitier modules not supported")
-              case _: NamedType =>
-                tpe
-              case _ =>
-                super.transform(tpe)
-
-          singletonTypeChecker.transform(TypeRepr.of[T])
 
           // check whether the type of the surrounding val or def is still to be inferred
           if completerClass.isInstance(completer) then
