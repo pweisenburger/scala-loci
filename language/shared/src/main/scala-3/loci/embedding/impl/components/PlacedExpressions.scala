@@ -93,7 +93,7 @@ trait PlacedExpressions:
        !(tpe =:= TypeRepr.of[Nothing]) && (
          tpe <:< types.context || tpe <:< types.multitierContext ||
          tpe <:< types.placedValue || tpe <:< types.subjective) then
-      errorAndCancel(message, pos.startPosition)
+      errorAndCancel(message, pos.firstCodeLine)
 
   private class TypePlacementTypesEraser(pos: Position, checkOnly: Boolean) extends TypeMap(quotes):
     override def transform(tpe: TypeRepr) =
@@ -433,25 +433,6 @@ trait PlacedExpressions:
     paramss foreach { _.params foreach { eraserCheckOnly.transformTree(_)(owner) } }
 
   private def checkPlacementTypesInResult(tpt: TypeTree, owner: Symbol) =
-    def skipToCode(content: String, pos: Int): Int =
-      var level = 0
-      var i = pos
-      val length = content.length
-      while i < length do
-        if level == -1 then
-          if content(i) == '\r' || content(i) == '\n' then level = 0
-        else if i + 1 < length && content(i) == '/' && content(i + 1) == '*' then
-          level += 1
-        else if i + 1 < length && content(i) == '*' && content(i + 1) == '/' then
-          i += 1
-          if level > 0 then level -= 1
-        else if level == 0 then
-          if i + 1 < length && content(i) == '/' && content(i + 1) == '/' then level = -1
-          else if !Character.isWhitespace(content(i)) then return i
-        i += 1
-      i
-    end skipToCode
-
     def notationWarning() =
       PlacementInfo(tpt.tpe) foreach: placementInfo =>
         report.warning(
@@ -461,10 +442,10 @@ trait PlacedExpressions:
     def checkNotation(tree: Tree, infix: Boolean) = tree match
       case _: TypeIdent =>
         if infix then
-          tree.pos.sourceFile.content foreach: content =>
-            val pos = skipToCode(content, tree.pos.end)
-            if pos < content.length && content(pos) == '[' then
-              notationWarning()
+          val code = SourceCode(tree.pos.sourceFile)
+          val pos = code.forwardSkipToCode(tree.pos.end)
+          if pos < code.content.length && code.content(pos) == '[' then
+            notationWarning()
       case _ =>
         notationWarning()
 

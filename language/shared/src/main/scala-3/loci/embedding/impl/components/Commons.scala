@@ -215,8 +215,16 @@ trait Commons:
       case _ => throw IllegalArgumentException(s"${tpe.safeShow} cannot be used as a value type")
 
   extension (pos: Position)
-    def startPosition = if pos.startLine != pos.endLine then Position(pos.sourceFile, pos.start, pos.start) else pos
-    def endPosition = if pos.startLine != pos.endLine then Position(pos.sourceFile, pos.end, pos.end) else pos
+    def firstCodeLine =
+      if pos.startLine != pos.endLine then
+        Position(pos.sourceFile, pos.start, SourceCode(pos.sourceFile).forwardSkipToLastCodeInLine(pos.start) + 1)
+      else
+        pos
+    def lastCodeLine =
+      if pos.startLine != pos.endLine then
+        Position(pos.sourceFile, SourceCode(pos.sourceFile).backwardSkipToLastCodeInLine(pos.end - 1), pos.end)
+      else
+        pos
 
   extension (symbol: Symbol)
     def findAncestor(predicate: Symbol => Boolean): Option[Symbol] =

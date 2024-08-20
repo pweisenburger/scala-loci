@@ -33,7 +33,7 @@ trait Invocation:
           s"${name(term.symbol)} of multitier module ${name(term.qualifier.symbol)}"
       errorAndCancel(
         s"Access to value $reference not allowed from module ${fullName(module)}",
-        term.posInUserCode.endPosition)
+        term.posInUserCode.lastCodeLine)
 
     path
   end accessPath
@@ -165,21 +165,21 @@ trait Invocation:
             errorAndCancel(
               s"Selected remote peer ${remotePeerType.safeShow(Printer.SafeTypeReprShortCode)} " +
               s"is not a subtype of the peer ${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)} of the placed value",
-              if call then term.posInUserCode.startPosition else term.posInUserCode.endPosition)
+              if call then term.posInUserCode.firstCodeLine else term.posInUserCode.lastCodeLine)
 
         placementInfo.modality.subjectivePeerType foreach: subjective =>
           if !(localPeerType <:< subjective) then
             errorAndCancel(
               s"Remote value that is subjectively dispatched to ${subjective.safeShow(Printer.SafeTypeReprShortCode)} peer " +
               s"is accessed on ${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)} peer.",
-              term.posInUserCode.startPosition)
+              term.posInUserCode.firstCodeLine)
 
         retrieval foreach: (local, remote, name) =>
           if !(local =:= localPeerType) then
             errorAndCancel(
               s"Remote access resolved the local peer as ${local.safeShow(Printer.SafeTypeReprShortCode)} " +
               s"but the local peer is ${localPeerType.safeShow(Printer.SafeTypeReprShortCode)}.",
-              term.posInUserCode.endPosition)
+              term.posInUserCode.lastCodeLine)
 
           val (remotePeerName, remotePeerType) =
             selectionMode.maybeType.fold("remote peer of the placed value", placementInfo.peerType) { ("selected remote peer", _) }
@@ -188,7 +188,7 @@ trait Invocation:
             errorAndCancel(
               s"Remote access resolved the remote peer as ${remote.safeShow(Printer.SafeTypeReprShortCode)} " +
               s"but the $remotePeerName is ${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)}.",
-              term.posInUserCode.endPosition)
+              term.posInUserCode.lastCodeLine)
 
           reference.symbol.info match
             case MethodType(_, _, _) =>
@@ -197,13 +197,13 @@ trait Invocation:
                 val access = name.fold(s"`$invocation`") { name => s"`$invocation` or `($invocation).$name`" }
                 errorAndCancel(
                   s"Remote access to placed method has to be invoked using $access.",
-                  reference.posInUserCode.startPosition)
+                  reference.posInUserCode.firstCodeLine)
             case ByNameType(_) =>
             case _ =>
               if call then
                 report.info(
                   "Remote access to placed value does not require `remote call` construct.",
-                  reference.posInUserCode.startPosition)
+                  reference.posInUserCode.firstCodeLine)
 
         def calledArguments(term: Term): (Term, List[Term]) = term match
           case Apply(fun, args) => fun.tpe.widenTermRefByName match
@@ -221,12 +221,12 @@ trait Invocation:
         val (expr, arguments) = calledArguments(reference)
 
         if isSuperAccess(expr) then
-          errorAndCancel("Remote access to super value is not allowed.", expr.posInUserCode.startPosition)
+          errorAndCancel("Remote access to super value is not allowed.", expr.posInUserCode.firstCodeLine)
 
         Option.when(!canceled) { (placementInfo, expr, arguments) }
 
       case _ =>
-        errorAndCancel("Unexpected shape of placed value.", value.posInUserCode.startPosition)
+        errorAndCancel("Unexpected shape of placed value.", value.posInUserCode.firstCodeLine)
         None
   end destructPlacedValueAccess
 
@@ -239,7 +239,7 @@ trait Invocation:
       call: Boolean) =
     PeerInfo.check(local) match
       case Left(message, _) =>
-        errorAndCancel(message, term.posInUserCode.startPosition)
+        errorAndCancel(message, term.posInUserCode.firstCodeLine)
 
       case Right(localPeerInfo) =>
         val multiplicity = selectionMode match
@@ -278,14 +278,14 @@ trait Invocation:
                   s"to ${remote.safeShow(Printer.SafeTypeReprShortCode)} peer as"
               errorAndCancel(
                 s"$prefix ${multiplicityName(tie)} but $message.",
-                if call then term.posInUserCode.startPosition else term.posInUserCode.endPosition)
+                if call then term.posInUserCode.firstCodeLine else term.posInUserCode.lastCodeLine)
 
           case _ =>
             if multiplicity.isEmpty then
               errorAndCancel(
                 s"No tie is specified from ${local.safeShow(Printer.SafeTypeReprShortCode)} peer " +
                 s"to ${remote.safeShow(Printer.SafeTypeReprShortCode)} peer.",
-                term.posInUserCode.endPosition)
+                term.posInUserCode.lastCodeLine)
   end checkTieMultiplicities
 
   private object invocationRewriter extends SafeTreeMap(quotes):
@@ -329,7 +329,7 @@ trait Invocation:
           def peerAccessPath(term: Term, necessarilyPlaced: Boolean) =
             val path = termAsSelection(term, module) flatMap { accessPath(_, module, peerType.typeSymbol) }
             if necessarilyPlaced && path.isEmpty then
-              errorAndCancel("Unexpected shape of placed value.", term.posInUserCode.endPosition)
+              errorAndCancel("Unexpected shape of placed value.", term.posInUserCode.lastCodeLine)
             path
 
           def remoteAccessArguments(remote: TypeRepr, reference: Term, arguments: List[Term]) =
@@ -345,7 +345,7 @@ trait Invocation:
                 case Some(reference) =>
                   Some(reference.qualifier)
                 case _ =>
-                  errorAndCancel("Unexpected shape of placed value.", reference.posInUserCode.startPosition)
+                  errorAndCancel("Unexpected shape of placed value.", reference.posInUserCode.firstCodeLine)
                   None
 
               path flatMap: path =>
@@ -366,10 +366,10 @@ trait Invocation:
                           else if args.sizeIs == 1 then args.head
                           else Tuple(args map { transformTerm(_)(owner) }))
                       case _ =>
-                        errorAndCancel("Unexpected remote access to value on peer without a signature.", term.posInUserCode.endPosition)
+                        errorAndCancel("Unexpected remote access to value on peer without a signature.", term.posInUserCode.lastCodeLine)
                         None
                   case _ =>
-                    errorAndCancel("Unexpected remote access to placed value without an accessor.", term.posInUserCode.endPosition)
+                    errorAndCancel("Unexpected remote access to placed value without an accessor.", term.posInUserCode.lastCodeLine)
                     None
             else
               None
@@ -473,7 +473,7 @@ trait Invocation:
                     errorAndCancel(
                       s"Value that is subjectively dispatched to ${subjective.safeShow(Printer.SafeTypeReprShortCode)} peer " +
                       s"cannot be invoked for $instance peer instance.",
-                      term.posInUserCode.startPosition)
+                      term.posInUserCode.firstCodeLine)
                     term
                   case _ =>
                     if isStablePath(reference) then
@@ -496,7 +496,7 @@ trait Invocation:
                   errorAndCancel(
                     s"Access to $value on ${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)} peer not allowed " +
                     s"on ${peerType.safeShow(Printer.SafeTypeReprShortCode)} peer.",
-                    reference.posInUserCode.startPosition)
+                    reference.posInUserCode.firstCodeLine)
                   None
                 else
                   peerAccessPath(term, necessarilyPlaced = true)

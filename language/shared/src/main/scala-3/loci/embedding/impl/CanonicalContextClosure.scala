@@ -191,8 +191,15 @@ def inferrableCanonicalPlacementTypeContextClosure[R: Type](using Quotes)(v: Exp
               else
                 rhs
 
+            // The position for the term of the application of the `and` extension method for compound placements
+            // may miss the final closing brace or parenthesis
+            val pos = Position(
+              Position.ofMacroExpansion.sourceFile,
+              Position.ofMacroExpansion.start,
+              SourceCode(Position.ofMacroExpansion.sourceFile).forwardSkipToCode(Position.ofMacroExpansion.end) + 1)
+
             // check whether the expanding function is the outer-most in the surrounding val or def
-            if contains.invoke(Position.ofMacroExpansion, sourcePos.invoke(rhsTerm, context)) == true then
+            if contains.invoke(pos, sourcePos.invoke(rhsTerm, context)) == true then
               outersIterator.invoke(context) match
                 case outers: Iterator[?] =>
                   outers foreach: context =>

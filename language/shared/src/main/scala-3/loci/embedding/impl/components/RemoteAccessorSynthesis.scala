@@ -527,7 +527,7 @@ trait RemoteAccessorSynthesis:
                   (parent.symbol.fieldMembers contains symbol) ||
                   (parent.symbol.methodMembers contains symbol) ||
                   (parent.symbol.typeMembers contains symbol)
-          parent.fold(s"$message inherited $name", tree.posInUserCode.startPosition): parent =>
+          parent.fold(s"$message inherited $name", tree.posInUserCode.firstCodeLine): parent =>
             symbolForParent match
               case Some(symbol) if parent.symbol == symbol.maybeOwner =>
                 (s"$message $name, inherited from ${parent.symbol.name}", parent.posInUserCode)
@@ -584,9 +584,9 @@ trait RemoteAccessorSynthesis:
                 if treePosition != Position.ofMacroExpansion then
                   val offset = treePosition.sourceFile.content.fold(0): content =>
                     (content.substring(qualifierPosition.end).iterator takeWhile { c => c.isWhitespace || c == '.' }).size
-                  Position(treePosition.sourceFile, qualifierPosition.end + offset, treePosition.end).endPosition
+                  Position(treePosition.sourceFile, qualifierPosition.end + offset, treePosition.end).lastCodeLine
                 else
-                  treePosition.endPosition
+                  treePosition.lastCodeLine
             val accesses = foldOverTree((indexing, index, values, transmittables, accessed, blocks, position), tree)(owner)
             val prefix = accesses.take(accesses.size - 1)
             prefix :* pos

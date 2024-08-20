@@ -193,7 +193,7 @@ trait Dispatch:
               val placedValue = This(module.symbol).select(placed)
               val argumentsType = placedValue.tpe.widenTermRefByName.typeArgs.head
               val placedType = symbol.info.widenTermRefByName.resultType
-              val pos = if symbol.flags is Flags.Synthetic then module.pos.startPosition else symbol.pos getOrElse module.pos.startPosition
+              val pos = if symbol.flags is Flags.Synthetic then module.pos.firstCodeLine else symbol.pos getOrElse module.pos.firstCodeLine
 
               val meaningfulArgument = meaningfulArgumentType(argumentsType)
 
@@ -241,14 +241,14 @@ trait Dispatch:
     end valueDispatchings
 
     val moduleDispatching =
-      nestedMultitierModules(module.symbol, module.pos.startPosition).toList flatMap: (name, path) =>
+      nestedMultitierModules(module.symbol, module.pos.firstCodeLine).toList flatMap: (name, path) =>
         multitierAccessPath(path, module.symbol, defn.AnyClass) match
           case Some(access) =>
             Some:
               (request: Term, signature: Term, path: Term, reference: Term) =>
                 CaseDef(Literal(StringConstant(name)), guard = None, Select.unique(access, names.dispatch).appliedTo(request, signature, path, reference))
           case _ =>
-            errorAndCancel("Unexpected shape of path to nested module.", position(path.symbol) getOrElse module.pos.startPosition)
+            errorAndCancel("Unexpected shape of path to nested module.", position(path.symbol) getOrElse module.pos.firstCodeLine)
             None
 
     val body = module.body map:

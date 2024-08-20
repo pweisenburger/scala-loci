@@ -208,7 +208,7 @@ trait PlacedStatements:
   private def placementType(stat: ValDef | DefDef, tpt: TypeTree) =
     PlacementInfo(stat.symbol.info.resultType) filter: placementInfo =>
       def pos = tpt match
-        case Inferred() => stat.posInUserCode.startPosition
+        case Inferred() => stat.posInUserCode.firstCodeLine
         case _ => tpt.posInUserCode
       if placementInfo.valueType.isContextFunctionType then
         errorAndCancel(s"Placed type cannot be a context function type: ${placementInfo.valueType.safeShow}", pos)
@@ -228,7 +228,7 @@ trait PlacedStatements:
     placementConstructsBindings.drop(accaptableBindingsCount) foreach: binding =>
       val bindingPosition = binding.posInUserCode
       val pos = if bindingPosition == Position.ofMacroExpansion then stat.posInUserCode else bindingPosition
-      errorAndCancel("Illegal use of multitier construct.", pos.startPosition)
+      errorAndCancel("Illegal use of multitier construct.", pos.firstCodeLine)
 
   private def errorForExtraBindings(stat: Statement, placementConstructsBindings: Iterable[List[Definition]]): Unit =
     placementConstructsBindings.iterator.zipWithIndex foreach: (placementConstructsBindings, index) =>
@@ -239,18 +239,18 @@ trait PlacedStatements:
     if PeerInfo(peerType).isEmpty then
       errorAndCancel(
         s"$statement must be $relation a peer type but is $relation ${peerType.safeShow}",
-        stat.posInUserCode.startPosition)
+        stat.posInUserCode.firstCodeLine)
     if peerType.typeSymbol != defn.AnyClass && !(peerType =:= ThisType(module.symbol).select(peerType.typeSymbol)) then
       errorAndCancel(
         s"$statement must be $relation a peer of module ${module.symbol.name} " +
         s"but is $relation peer ${peerType.safeShow}",
-        stat.posInUserCode.startPosition)
+        stat.posInUserCode.firstCodeLine)
 
   private def statementTypeTreeInfo(stat: Statement) = stat match
-    case ValDef(_, Inferred(), _) | DefDef(_, _, Inferred(), _) => (stat.posInUserCode.startPosition, true)
+    case ValDef(_, Inferred(), _) | DefDef(_, _, Inferred(), _) => (stat.posInUserCode.firstCodeLine, true)
     case ValDef(_, tpt, _) => (tpt.posInUserCode, false)
     case DefDef(_, _, tpt, _) => (tpt.posInUserCode, false)
-    case _ => (stat.posInUserCode.startPosition, false)
+    case _ => (stat.posInUserCode.firstCodeLine, false)
 
   private def checkPlacementType(stat: Statement, bindings: List[List[Definition]], placementInfo: PlacementInfo, module: ClassDef): Unit =
     val (statement, subjectiveStatement) = stat match
@@ -315,17 +315,17 @@ trait PlacedStatements:
           errorForExtraBindings(stat, placementConstructsBindings)
 
           if bindings.isEmpty || hasNonSyntheticPlacedConstructBindings then
-            errorAndCancel(s"Placed statements must be enclosed in a placed block: on[${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)}]", stat.posInUserCode.startPosition)
+            errorAndCancel(s"Placed statements must be enclosed in a placed block: on[${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)}]", stat.posInUserCode.firstCodeLine)
           else if bindings.sizeIs > 1 then
             val compound = extractPlacementBodies(expr) match
               case (_, peer1) :: (_, peer2) :: _ => s": (on[${peer1.name}] <...>) and (on[${peer2.name}] <...>)"
               case _ => ""
-            errorAndCancel(s"Placed statements cannot be compound placed expressions$compound. Consider splitting them into separate statements.", stat.posInUserCode.startPosition)
+            errorAndCancel(s"Placed statements cannot be compound placed expressions$compound. Consider splitting them into separate statements.", stat.posInUserCode.firstCodeLine)
 
           if placementInfo.modality.subjective then
-            errorAndCancel("Placed statements cannot be subjective.", stat.posInUserCode.startPosition)
+            errorAndCancel("Placed statements cannot be subjective.", stat.posInUserCode.firstCodeLine)
           if placementInfo.modality.local then
-            errorAndCancel("Placed statements cannot be local.", stat.posInUserCode.startPosition)
+            errorAndCancel("Placed statements cannot be local.", stat.posInUserCode.firstCodeLine)
           if !canceled then
             checkPlacementType(stat, bindings, placementInfo, module)
 
