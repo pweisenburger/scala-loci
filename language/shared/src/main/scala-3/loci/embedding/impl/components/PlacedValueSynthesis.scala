@@ -15,7 +15,7 @@ object PlacedValueSynthesis:
 
 @experimental
 trait PlacedValueSynthesis:
-  this: Component & Commons & Annotations & SymbolTrees & Placements & NonPlacements & Peers =>
+  this: Component & Commons & Annotations & SymbolTrees & PlacedTransformations & Placements & NonPlacements & Peers =>
   import quotes.reflect.*
 
   case class SynthesizedPlacedValues(symbol: Symbol, module: Symbol, peer: Symbol, parents: List[TypeRepr])
@@ -185,11 +185,25 @@ trait PlacedValueSynthesis:
             val (info, peer) = erasePlacementAndNonPlacementType(symbol.info)
             (name, if hasSyntheticMultitierContextArgument(symbol) then dropLastArgumentList(info) else info, peer)
 
+    val peers =
+      val rhs = symbolTree(symbol) collect:
+        case PlacedStatement(ValDef(_, _, Some(rhs))) => rhs
+        case PlacedStatement(DefDef(_, _, _, Some(rhs))) => rhs
+        case NonPlacedStatement(ValDef(_, _, Some(rhs))) => rhs
+        case NonPlacedStatement(DefDef(_, _, _, Some(rhs))) => rhs
+
+      val peers = rhs.toList flatMap: rhs =>
+        extractPlacementBodies(rhs) map: (_, peer) =>
+          peer
+
+      (if peers contains peer then peers else peer :: peers) filterNot { _ == defn.AnyClass }
+    end peers
+
     val universalValues = synthesizedPlacedValues(symbol.owner, defn.AnyClass).symbol
-    val placedValues = synthesizedPlacedValues(symbol.owner, peer).symbol
+    val placedValues = peers map { synthesizedPlacedValues(symbol.owner, _).symbol }
 
     synthesizedDefinitionsCache.getOrElse(symbol, {
-      val universalOnly = peer == defn.AnyClass || (symbol.flags is Flags.Deferred)
+      val universalOnly = peer == defn.AnyClass && peers.sizeIs == 1 || (symbol.flags is Flags.Deferred)
       val flags = if universalOnly then symbol.flags else symbol.flags &~ Flags.PrivateLocal
       val decrementContextResultCount = info != symbol.info
 
@@ -201,23 +215,25 @@ trait PlacedValueSynthesis:
       val definition =
         if !universalOnly then
           if symbol.isMethod then
-            val placed = placedValues.methodMember(universalName) find { _.info =:= info } getOrElse:
-              val placed = newMethod(placedValues, universalName, info, flags | Flags.Synthetic | Flags.Override, Symbol.noSymbol)
-              copyAnnotations(symbol, placed, decrementContextResultCount, sameTargetName = true)
-              placed
-            SynthesizedDefinitions(symbol, universal, None, List(placed))
+            val impls = placedValues map: placedValues =>
+              placedValues.methodMember(universalName) find { _.info =:= info } getOrElse:
+                val placed = newMethod(placedValues, universalName, info, flags | Flags.Synthetic | Flags.Override, Symbol.noSymbol)
+                copyAnnotations(symbol, placed, decrementContextResultCount, sameTargetName = true)
+                placed
+            SynthesizedDefinitions(symbol, universal, None, impls)
           else
             val methodType = MethodType(List.empty)(_ => List.empty, _ => info)
 
             val universalInit = universalValues.fieldMember(placedName) orElse:
               newMethod(universalValues, placedName, methodType, Flags.Synthetic, Symbol.noSymbol)
 
-            val placedInit = placedValues.fieldMember(placedName) orElse:
-              val placedInit = newMethod(placedValues, placedName, methodType, Flags.Synthetic | Flags.Override, Symbol.noSymbol)
-              copyAnnotations(symbol, placedInit, decrementContextResultCount, sameTargetName = false)
-              placedInit
+            val implsInit = placedValues map: placedValues =>
+              placedValues.fieldMember(placedName) orElse:
+                val placedInit = newMethod(placedValues, placedName, methodType, Flags.Synthetic | Flags.Override, Symbol.noSymbol)
+                copyAnnotations(symbol, placedInit, decrementContextResultCount, sameTargetName = false)
+                placedInit
 
-            SynthesizedDefinitions(symbol, universal, Some(universalInit), List(placedInit))
+            SynthesizedDefinitions(symbol, universal, Some(universalInit), implsInit)
         else
           SynthesizedDefinitions(symbol, universal, None, List.empty)
       end definition

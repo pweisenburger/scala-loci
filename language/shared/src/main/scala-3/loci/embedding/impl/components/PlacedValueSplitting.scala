@@ -21,24 +21,35 @@ trait PlacedValueSplitting:
     else
       Literal(NullConstant()).select(symbols.asInstanceOf).appliedToType(tpe)
 
-  private def synthesizePlacedDefinition(impl: Symbol, original: Statement, module: Symbol, peer: Symbol): ValDef | DefDef =
-    val rhs = original match
-      case stat: ValDef => stat.rhs
-      case stat: DefDef => stat.rhs
-      case _ => None
+  private def rhssByPeers(stat: Statement) =
+    def peer =
+      PlacementInfo(stat.symbol.info.widenTermRefByName.resultType).fold(defn.AnyClass) { _.peerType.typeSymbol }
 
-    val synthesizedBody = rhs map: rhs =>
-      original match
-        case _ if impl.owner != synthesizedPlacedValues(module, peer).symbol =>
-          nullOf(impl.info.resultType.substituteParamRefsByTermRefs(impl))(impl)
-        case PlacedStatement(_) | NonPlacedStatement(_) =>
-          extractPlacementBody(rhs).changeOwner(impl)
-        case _ =>
-          rhs.changeOwner(impl)
+    def rhssByPeers(rhs: Option[Term]) =
+      rhs.fold(Map(peer -> None)): rhs =>
+        (extractPlacementBodies(rhs) map { (body, peer) => peer -> Some(body) }).toMap
+
+    stat match
+      case PlacedStatement(ValDef(_, _, rhs))  => rhssByPeers(rhs)
+      case PlacedStatement(DefDef(_, _, _, rhs)) => rhssByPeers(rhs)
+      case NonPlacedStatement(ValDef(_, _, rhs)) => rhssByPeers(rhs)
+      case NonPlacedStatement(DefDef(_, _, _, rhs)) => rhssByPeers(rhs)
+      case ValDef(_, _, rhs) => Map(defn.AnyClass -> rhs)
+      case DefDef(_, _, _, rhs) => Map(defn.AnyClass -> rhs)
+      case _ => Map.empty
+  end rhssByPeers
+
+  private def synthesizePlacedDefinition(impl: Symbol, stat: Statement, module: Symbol, rhss: Map[Symbol, Option[Term]]): ValDef | DefDef =
+    val rhs = synthesizedPlacedValues(impl.owner) flatMap: placedValues =>
+      rhss.get(placedValues.peer)
+
+    val synthesizedBody =
+      rhs.fold(Some(nullOf(impl.info.resultType.substituteParamRefsByTermRefs(impl))(impl))):
+        _ map { _.changeOwner(impl) }
 
     if impl.isMethod then
       def body(paramss: List[List[Tree]]) = synthesizedBody map:
-        _.substituteRefs((original.symbol.paramSymss.flatten zip (paramss flatMap { _ map { _.symbol } })).toMap, impl)
+        _.substituteRefs((stat.symbol.paramSymss.flatten zip (paramss flatMap { _ map { _.symbol } })).toMap, impl)
       DefDef(impl, body)
     else
       ValDef(impl, synthesizedBody)
@@ -57,19 +68,23 @@ trait PlacedValueSplitting:
     val placedBodies = module.body.foldLeft(Map.empty[Symbol, List[Statement]]):
       case (bodies, stat @ (_: ValDef | _: DefDef)) if synthesizeMember(stat.symbol) =>
         synthesizedDefinitions(stat.symbol).fold(bodies): definitions =>
-          val peer = PlacementInfo(stat.symbol.info.widenTermRefByName.resultType).fold(defn.AnyClass) { _.peerType.typeSymbol }
+          val rhss =
+            if stat.symbol.flags is Flags.Deferred then
+              Map(defn.AnyClass -> None)
+            else
+              rhssByPeers(stat)
 
           val bodiesWithBinding = definitions match
             case SynthesizedDefinitions(_, binding, None, _) =>
-              bodies.prepended(binding.owner)(synthesizePlacedDefinition(binding, stat, module.symbol, peer))
+              bodies.prepended(binding.owner)(synthesizePlacedDefinition(binding, stat, module.symbol, rhss))
             case SynthesizedDefinitions(_, binding, Some(init), _) =>
               bodies.prepended(binding.owner)(ValDef(binding, Some(Ref(init).appliedToNone)))
-                .prepended(init.owner)(synthesizePlacedDefinition(init, stat, module.symbol, peer))
+                .prepended(init.owner)(synthesizePlacedDefinition(init, stat, module.symbol, rhss))
             case _ =>
               bodies
 
           definitions.impls.foldLeft(bodiesWithBinding): (bodies, impl) =>
-            bodies.prepended(impl.owner)(synthesizePlacedDefinition(impl, stat, module.symbol, peer))
+            bodies.prepended(impl.owner)(synthesizePlacedDefinition(impl, stat, module.symbol, rhss))
 
       case (bodies, stat: ClassDef) if synthesizeMember(stat.symbol) =>
         synthesizedDefinitions(stat.symbol).fold(bodies): nestedModule =>
@@ -80,6 +95,10 @@ trait PlacedValueSplitting:
         val peer = placementInfo.fold(defn.AnyClass) { _.peerType.typeSymbol }
         val index = indices.getOrElse(peer, 0)
         indices += peer -> (index + 1)
+
+        def extractPlacementBody(term: Term) = extractPlacementBodies(term) match
+          case List(body -> _) => body
+          case _ => term
 
         val bodiesUniversalValues =
           if !placementInfo.isDefined then

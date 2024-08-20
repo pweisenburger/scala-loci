@@ -75,7 +75,12 @@ object Multitier:
             preprocessingPhases.foldLeft(stat): (stat, process) =>
               if !canceled then
                 val processed = process(stat)
+
                 symbolTree(processed.symbol) = processed
+                processed.body foreach:
+                  case stat: Definition => symbolTree(stat.symbol) = stat
+                  case _ =>
+
                 processed
               else
                 stat
@@ -96,7 +101,12 @@ object Multitier:
               if !skip then
                 processingPhases.foldLeft(stat): (stat, process) =>
                   val processed = process(stat)
+
                   symbolTree(processed.symbol) = processed
+                  processed.body foreach :
+                    case stat: Definition => symbolTree(stat.symbol) = stat
+                    case _ =>
+
                   processed
               else
                 stat

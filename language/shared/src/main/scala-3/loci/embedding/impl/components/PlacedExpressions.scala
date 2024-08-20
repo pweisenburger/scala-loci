@@ -423,7 +423,7 @@ trait PlacedExpressions:
     var substitutions = List.empty[(Symbol, Symbol)]
     var replacements = List.empty[(Symbol, Symbol)]
     val eraser = ExpressionPlacementTypesEraserAndUnitCoercer(checkOnly = false, substitutions ::= _ -> _, replacements ::= _ -> _)
-    val expr = transformPlacementBody(term): (symbol, body, expr) =>
+    val expr = transformPlacementBodies(term): (symbol, body, expr) =>
       val term = if canceled then body else eraseSubjectiveTypesInClosures(eraser.transformTerm(body)(symbol))
       if !canceled then typesInClosuresChecker.traverseTree(term)(owner)
       term -> expr

@@ -24,13 +24,6 @@ sealed trait Placed[-P, +T] extends PlacedValue[P, T]:
   infix def from[R](r0: Remote[R], r1: Remote[R], rn: Remote[R]*): T @uncheckedVariance fromMultiple R
 
 object Placed:
-//  extension [P, T](inline placed: Placed[P, T])
-//    transparent inline infix def and[T0, T1, P0, PT, P1, T0_on_P0](inline v: T0_on_P0)(using
-//      ev0: T0_on_P0 <:< (T0 on P0),
-//      ev1: CommonSuperType[T, T0, T1],
-//      ev2: CommonSuperType[P, P0, PT],
-//      ev3: AnyUpcast[PT, P1]): T1 on P1 = ${ Placement.apply2Impl[T1 on P1]('placed, 'v) }
-
   inline given lift[L, T, U](using Placement.Context.Resolution[L], PlacedClean[T, T, U]): Conversion[T, U on L] with
     transparent inline def apply(v: T) = erased(v): U on L
 
@@ -44,48 +37,4 @@ object Placed:
   object Selection:
     type Single[P, T] = PlacedValue.Resolution[P, Selected.Single[T]]
     type Multiple[P, T] = PlacedValue.Resolution[P, Selected.Multiple[T]]
-
-
-//sealed trait RemoteSbj[R, -T, U]
-//
-//object RemoteSbj {
-//  implicit def remote[R, T, U](r: Remote[R])(implicit ev: Subjectivity[T, U]): RemoteSbj[R, T, U] = erased(ev)
-//}
-
-
-//sealed trait CommonSuperType[-T, -U, R]
-//
-//sealed trait CommonSuperTypeFallback {
-//  implicit def fallback[T, U]: CommonSuperType[T, T, U] = erased
-//}
-//
-//sealed trait CommonSuperTypeDefault extends CommonSuperTypeFallback {
-//  implicit def default[T]: CommonSuperType[T, T, T] = erased
-//}
-//
-//object CommonSuperType extends CommonSuperTypeDefault {
-//  implicit def local[T, _Local_[T] <: Local[T]]: CommonSuperType[_Local_[T], _Local_[T], _Local_[T]] = erased
-//}
-//
-//
-//sealed trait AnyUpcast[T, R]
-//
-//sealed trait AnyUpcastFallback {
-//  implicit def fallback[T, U]: AnyUpcast[T, U] = erased
-//}
-//
-//sealed trait AnyUpcastDefault extends AnyUpcastFallback {
-//  implicit def default[T]: AnyUpcast[T, T] = erased
-//}
-//
-//sealed trait AnyUpcastAnyVal extends AnyUpcastDefault {
-//  implicit def anyval: AnyUpcast[AnyVal, Any] = erased
-//}
-//
-//sealed trait AnyUpcastAnyRef extends AnyUpcastAnyVal {
-//  implicit def anyref: AnyUpcast[AnyRef, Any] = erased
-//}
-//
-//object AnyUpcast extends AnyUpcastAnyRef {
-//  implicit def obj: AnyUpcast[Object, Any] = erased
-//}
+end Placed

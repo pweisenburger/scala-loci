@@ -442,6 +442,7 @@ object MultitierPreprocessor:
                       apply.invoke(null, TypedSplice(Ref(placed)), List(TypedSplice(contextTree)), Position.ofMacroExpansion.sourceFile),
                       applyKindUsing)
 
+                    val positionSpan = span.invoke(tree)
                     val paramName = termName.invoke(null, "<synthetic context>")
                     val paramTypeTree = typeTree.invoke(null, Position.ofMacroExpansion.sourceFile)
 
@@ -450,11 +451,16 @@ object MultitierPreprocessor:
                         withFlags.invoke(
                           valDef.invoke(null, paramName, paramTypeTree, emptyTree, Position.ofMacroExpansion.sourceFile),
                           Flags.Synthetic | Flags.Param | Flags.Given),
-                        span.invoke(tree))
+                        positionSpan)
 
                     val contextFunction = function.invoke(null, List(paramDef), rhs, Position.ofMacroExpansion.sourceFile)
 
-                    val placedRhs = apply.invoke(null, placedContext, List(contextFunction), Position.ofMacroExpansion.sourceFile)
+                    val placedRhs =
+                      // extend the span of the right-hand-side macro application to the entire definition
+                      // we use this extended span to identify the outer-most macro application when inferring context closures
+                      withSpan.invoke(
+                        apply.invoke(null, placedContext, List(contextFunction), Position.ofMacroExpansion.sourceFile),
+                        positionSpan)
 
                     if valDefClass.isInstance(tree) then
                       mutateField(valRhs, tree, placedRhs)

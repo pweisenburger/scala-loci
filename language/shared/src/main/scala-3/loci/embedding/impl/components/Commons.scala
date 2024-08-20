@@ -62,6 +62,8 @@ trait Commons:
     val selectApplySeq = '{ ?[embedding.Select[?]].apply(?[Seq[language.Remote[?]]]) }.symbol
     val callApply = '{ ?[embedding.Call[?, ?]].call(?) }.symbol
     val remoteReference = '{ language.Remote.reference(?) }.symbol
+    val and = '{ language.and(?)(?)(using ?, ?) }.symbol
+    val lowestCommonSuperType = TypeRepr.of[language.LowestCommonSuperType].typeSymbol
     val peer = TypeRepr.of[language.peer].typeSymbol
     val single = TypeRepr.of[language.Single[?]].typeSymbol
     val optional = TypeRepr.of[language.Optional[?]].typeSymbol
