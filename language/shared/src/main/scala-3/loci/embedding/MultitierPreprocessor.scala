@@ -169,10 +169,10 @@ object MultitierPreprocessor:
             case tree: Tree @unchecked if treeClass.isInstance(tree) => Some(tree)
             case _ => None
 
-        def tryTypingTypeTree(tree: TypeTree) =
+        def tryTypingTypeTree(tpt: TypeTree) =
           noReporting(context)(null, useExploringContext = false): context =>
-            typedType.invoke(contextTyper, tree, wildcardType.get(null), false, context) match
-              case QuotesTree(tree: TypeTree) => Some(tree)
+            typedType.invoke(contextTyper, tpt, wildcardType.get(null), false, context) match
+              case QuotesTree(tpt: TypeTree) => Some(tpt)
               case _ => None
 
         def correctlyTyped(tpe: TypeRepr) = tpe match
@@ -363,7 +363,9 @@ object MultitierPreprocessor:
 
               val untypedTpt = valOrDefTpt.invoke(tree)
               val maybeTypedTpt = untypedTpt match
-                case tree: TypeTree @unchecked if hasNoParams || maybeRelatedPlacementTypeTree(tree) => tryTypingTypeTree(tree)
+                // The `tpt` of a `val` or a `def` is always a `TypeTree`,
+                // i.e., `isType` is true and they are no type bounds
+                case tpt: TypeTree @unchecked if hasNoParams || maybeRelatedPlacementTypeTree(tpt) => tryTypingTypeTree(tpt)
                 case _ => None
               val typedTpt = maybeTypedTpt getOrElse Singleton(Literal(NullConstant()))
 
@@ -395,8 +397,9 @@ object MultitierPreprocessor:
                   mutateField(appliedTypeTreeArgs, untypedTpt, of(args) :: args.tail)
                 case (tpt, tpe) =>
                   def isMultitierModule =
-                    tpe.baseClasses exists: symbol =>
-                      symbol.hasAnnotation(`language.multitier`) || symbol.hasAnnotation(`embedding.multitier`)
+                    hasAnnotationSymbol(tree, `language.multitier`) ||
+                    (tpe.baseClasses exists: symbol =>
+                      symbol.hasAnnotation(`language.multitier`) || symbol.hasAnnotation(`embedding.multitier`))
                   if insertNonplacedReturnTypeForValuesWithoutParams &&
                      multitierAnnottee &&
                      !hasNonPlacementType &&
@@ -480,7 +483,7 @@ object MultitierPreprocessor:
                             val tpt = valOrDefTpt.invoke(param)
                             if typedSpliceClass.isInstance(tpt) then
                               splice.invoke(tpt) match
-                                case QuotesTree(tpt: TypeTree @unchecked) => tpt.tpe == TypeRepr.of[Multitier.Context]
+                                case QuotesTree(tpt: TypeTree) => tpt.tpe == TypeRepr.of[Multitier.Context]
                                 case _ => false
                             else
                               false

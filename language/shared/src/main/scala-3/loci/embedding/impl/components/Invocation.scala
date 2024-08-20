@@ -285,7 +285,7 @@ trait Invocation:
               errorAndCancel(
                 s"No tie is specified from ${local.safeShow(Printer.SafeTypeReprShortCode)} peer " +
                 s"to ${remote.safeShow(Printer.SafeTypeReprShortCode)} peer.",
-                term.posInUserCode.lastCodeLine)
+                if call then term.posInUserCode.firstCodeLine else term.posInUserCode.lastCodeLine)
   end checkTieMultiplicities
 
   private object invocationRewriter extends SafeTreeMap(quotes):
@@ -329,7 +329,7 @@ trait Invocation:
           def peerAccessPath(term: Term, necessarilyPlaced: Boolean) =
             val path = termAsSelection(term, module) flatMap { accessPath(_, module, peerType.typeSymbol) }
             if necessarilyPlaced && path.isEmpty then
-              errorAndCancel("Unexpected shape of placed value.", term.posInUserCode.lastCodeLine)
+              errorAndCancel("Unexpected shape of placed value.", term.posInUserCode)
             path
 
           def remoteAccessArguments(remote: TypeRepr, reference: Term, arguments: List[Term]) =
@@ -459,7 +459,9 @@ trait Invocation:
 
               placementInfo.modality.subjectivePeerType.fold(transformedExpr): subjective =>
                 val instance =
-                  if !(transformedRemote.tpe derivesFrom symbols.remote) then
+                  if transformedRemote.tpe =:= TypeRepr.of[Nothing] then
+                    None
+                  else if !(transformedRemote.tpe derivesFrom symbols.remote) then
                     Some("another")
                   else
                     val remote = transformedRemote.tpe.baseType(symbols.remote).typeArgs.head

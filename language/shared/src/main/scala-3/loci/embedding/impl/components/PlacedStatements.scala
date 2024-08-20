@@ -166,10 +166,10 @@ trait PlacedStatements:
           val peer = placementInfo.peerType.asPackedValueType
           val placement = symbols.`embedding.on`.typeRef.appliedTo(placementInfo.canonicalType.typeArgs).asPackedValueType
           val tpe = contextMethodType[Placement.Context[peer.Type], placement.Type]
-          val block @ Block(List(lambda: DefDef), closure @ Closure(meth, _)) =
+          val block @ Block(List(lambda: DefDef), closure @ Closure(method, _)) =
             Lambda(binding.symbol.owner, tpe, (symbol, _) => body.changeOwner(symbol)): @unchecked
           bindings ->
-            Block.copy(block)(List(lambda), Closure.copy(closure)(meth, Some(placementInfo.canonicalType)))
+            Block.copy(block)(List(lambda), Closure.copy(closure)(method, Some(placementInfo.canonicalType)))
 
   private def cleanPlacementSyntax(placementInfo: PlacementInfo, rhs: Term)(owner: Symbol): (List[List[Definition]], Term) =
     val (bindings, expr) = cleanPlacementExpressionOrClosure(placementInfo, rhs)

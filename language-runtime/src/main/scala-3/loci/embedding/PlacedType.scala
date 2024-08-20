@@ -3,7 +3,7 @@ package embedding
 
 import loci.language.{on as _, *}
 import loci.utility.reflectionExtensions.*
-import utility.DummyImplicit
+import loci.utility.DummyImplicit
 
 import scala.quoted.*
 

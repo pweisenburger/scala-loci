@@ -205,9 +205,9 @@ trait PlacedBlocks:
           val peer = remote.asPackedValueType
           val placement = embeddingType.asPackedValueType
           val tpe = contextMethodType[Placement.Context[peer.Type], placement.Type]
-          val block @ Block(List(lambda: DefDef), closure @ Closure(meth, _)) =
+          val block @ Block(List(lambda: DefDef), closure @ Closure(method, _)) =
             Lambda(symbol, tpe, (symbol, _) => erase(transformTerm(coercedExpr)(context).changeOwner(symbol))): @unchecked
-          val rhs = Block.copy(block)(List(lambda), Closure.copy(closure)(meth, Some(languageType)))
+          val rhs = Block.copy(block)(List(lambda), Closure.copy(closure)(method, Some(languageType)))
 
           val definition = DefDef(
             symbol,
@@ -231,7 +231,7 @@ trait PlacedBlocks:
           val call = selected
             .select(symbols.callApply)
             .appliedToTypes(List(remote, remote, placed, symbols.`embedding.on`.typeRef))
-            .appliedTo(Ref(symbol).appliedToArgs(paramRefs).select(symbols.contextFunction1Apply).appliedTo('{ Placement.Context.fallback[peer.Type] }.asTerm))
+            .appliedTo(Ref(symbol).adaptedTo(term).appliedToArgs(paramRefs).select(symbols.contextFunction1Apply).appliedTo('{ Placement.Context.fallback[peer.Type] }.asTerm))
             .appliedTo(Ref(symbols.erased).appliedToType(TypeRepr.of[Nothing]))
 
           val callAccess = access match

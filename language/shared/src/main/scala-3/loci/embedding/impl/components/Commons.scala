@@ -63,13 +63,13 @@ trait Commons:
     val callApply = '{ ?[embedding.Call[?, ?]].call(?) }.symbol
     val remoteReference = '{ language.Remote.reference(?) }.symbol
     val and = '{ language.and(?)(?)(using ?, ?) }.symbol
-    val lowestCommonSuperType = TypeRepr.of[language.LowestCommonSuperType].typeSymbol
     val peer = TypeRepr.of[language.peer].typeSymbol
     val single = TypeRepr.of[language.Single[?]].typeSymbol
     val optional = TypeRepr.of[language.Optional[?]].typeSymbol
     val multiple = TypeRepr.of[language.Multiple[?]].typeSymbol
     val context = TypeRepr.of[Placement.Context.type].typeSymbol
     val multitierContext = TypeRepr.of[embedding.Multitier.Context.type].typeSymbol
+    val lowestCommonSuperType = TypeRepr.of[LowestCommonSuperType].typeSymbol
     val delegates = TypeRepr.of[transmitter.Transmittables.Delegates[?]].typeSymbol
     val message = TypeRepr.of[transmitter.Transmittables.Message[?]].typeSymbol
     val none = TypeRepr.of[transmitter.Transmittables.None].typeSymbol
@@ -226,6 +226,35 @@ trait Commons:
       else
         pos
 
+  extension (term: Term)
+    def adaptedTo(tree: Tree) =
+      val block = Block.copy(tree)(List(), term)
+      term match
+        case Wildcard() => Wildcard()
+        case Ident(name) => Ident.copy(block)(name)
+        case Select(qualifier, name) => Select.copy(block)(qualifier, name)
+        case Literal(constant) => Literal.copy(block)(constant)
+        case This(identifier) => This.copy(block)(identifier)
+        case New(tpt) => New.copy(block)(tpt)
+        case NamedArg(name, value) => NamedArg.copy(block)(name, value)
+        case Apply(fun, args) => Apply.copy(block)(fun, args)
+        case TypeApply(fun, args) => TypeApply.copy(block)(fun, args)
+        case Super(qualifier, identifier) => Super.copy(block)(qualifier, identifier)
+        case Assign(lhs, rhs) => Assign.copy(block)(lhs, rhs)
+        case Block(statements, expr) => Block.copy(block)(statements, expr)
+        case Closure(method, tpe) => Closure.copy(block)(method, tpe)
+        case If(condition, thenBranch, elseBranch) => If.copy(block)(condition, thenBranch, elseBranch)
+        case Match(scrutinee, cases) => Match.copy(block)(scrutinee, cases)
+        case SummonFrom(cases) => SummonFrom.copy(block)(cases)
+        case Try(body, cases, finalizer) => Try.copy(block)(body, cases, finalizer)
+        case Return(expr, from) => Return.copy(block)(expr, from)
+        case Repeated(elements, tpt) => Repeated.copy(block)(elements, tpt)
+        case Inlined(call, bindings, body) => Inlined.copy(block)(call, bindings, body)
+        case SelectOuter(qualifier, name, level) => SelectOuter.copy(block)(qualifier, name, level)
+        case While(condition, body) => While.copy(block)(condition, body)
+        case Typed(expr, tpt) => Typed.copy(block)(expr, tpt)
+        case _ => term
+
   extension (symbol: Symbol)
     def findAncestor(predicate: Symbol => Boolean): Option[Symbol] =
       if symbol.exists then
@@ -277,9 +306,9 @@ trait Commons:
     (symbol.getAnnotation(symbols.`embedding.multitier`) collect { case Apply(_, List(arg)) => arg })
 
   def isMultitierModule(symbol: Symbol): Boolean =
-    symbol.exists && (symbol.isField || (symbol.isModuleDef && !symbol.isPackageDef) || symbol.isClassDef) &&
-      (symbol.hasAnnotation(symbols.`language.multitier`) || symbol.hasAnnotation(symbols.`embedding.multitier`) ||
-       !symbol.isClassDef && (symbol.info.baseClasses exists isMultitierModule))
+    symbol.exists && (symbol.isField || symbol.isModuleDef || symbol.isClassDef) && !symbol.isPackageDef &&
+    (symbol.info.baseClasses exists: symbol =>
+      symbol.hasAnnotation(symbols.`language.multitier`) || symbol.hasAnnotation(symbols.`embedding.multitier`))
 
   def isMultitierNestedPath(symbol: Symbol): Boolean =
     symbol.exists && (isMultitierModule(symbol) || symbol.isModuleDef && isMultitierNestedPath(symbol.maybeOwner))

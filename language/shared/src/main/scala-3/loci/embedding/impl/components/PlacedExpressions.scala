@@ -72,8 +72,28 @@ trait PlacedExpressions:
         val owner = symbol.maybeOwner
         owner == symbols.select || owner == symbols.run ||
         owner == symbols.capture || owner == symbols.block ||
-        owner == symbols.narrow || owner == symbols.call ||
-        owner == symbols.placed || owner == symbols.subjective
+        owner == symbols.narrow || owner == symbols.call
+
+  private enum PlacementConstruct:
+    case Transmission, Construction, Selection, None
+
+  private object PlacementConstruct:
+    def apply(symbol: Symbol) = symbol match
+      case PlacedAccess.Transmission(_) =>
+        Transmission
+      case _ =>
+        val owner = symbol.maybeOwner
+        if owner == symbols.select || owner == symbols.run ||
+           owner == symbols.capture || owner == symbols.block ||
+           owner == symbols.narrow || owner == symbols.call then
+          Construction
+        else if owner == symbols.placed && symbol.name != names.to then
+          Selection
+        else
+          None
+
+  extension (self: PlacementConstruct) private inline def isOneOf(constructs: PlacementConstruct*) =
+    constructs contains self
 
   private def selectionType(tpe: TypeRepr) = tpe match
     case AppliedType(_, _) | Refinement(_, _, _) =>
@@ -240,18 +260,28 @@ trait PlacedExpressions:
         super.transformTerm(term)(owner)
 
       // keep placement types in the intended language constructs that expect them as type parameters
-      case TypeApply(fun, args) if placementTypeCheckExemption(term.symbol) =>
+      case TypeApply(fun, args) if PlacementConstruct(term.symbol) == PlacementConstruct.Construction =>
         TypeApply.copy(term)(transformTerm(fun)(owner), args)
 
       // keep direct placed values accesses through the intended language constructs that expect placed values
       // check arguments before applied function to improve error messages
-      case term @ Apply(_, _) if placementTypeCheckExemption(term.symbol) =>
+      case term @ Apply(_, _) if PlacementConstruct(term.symbol) isOneOf (PlacementConstruct.Transmission, PlacementConstruct.Construction) =>
+        val placementConstruct = PlacementConstruct(term.symbol)
+
+        def skipApplies(term: Term, skipNestedApplies: Boolean): Term = term match
+          case Apply(fun, args) if skipNestedApplies => Apply.copy(term)(skipApplies(fun, skipNestedApplies = false), transformTerms(args)(owner))
+          case TypeApply(fun, args) => TypeApply.copy(term)(skipApplies(fun, skipNestedApplies = false), args)
+          case _ => super.transformTerm(term)(owner)
+
         val args = clearTypeApplications(term.fun).tpe match
           case MethodType(_, paramTypes, _) =>
             paramTypes zip term.args map: (tpe, arg) =>
               if !(tpe =:= TypeRepr.of[Nothing]) && tpe <:< types.placedValue then
                 val Narrowing(expr) = arg
-                super.transformTerm(expr)(owner)
+                val skipNestedApplies =
+                  placementConstruct == PlacementConstruct.Transmission &&
+                  PlacementConstruct(expr.symbol) == PlacementConstruct.Selection
+                skipApplies(expr, skipNestedApplies)
               else
                 transformTerm(arg)(owner)
           case _ =>
@@ -286,15 +316,20 @@ trait PlacedExpressions:
 
             // check that there are no remaining multitier terms
             case _ =>
-              if term.symbol.exists && term.symbol.owner == symbols.placed && term.symbol.name != names.to then
+              if PlacementConstruct(term.symbol) == PlacementConstruct.Selection then
                 val name = term.symbol.name
-                val access =
+                val brackets =
                   if term.symbol.paramSymss exists { _ exists { _.isTerm } } then "(...)"
                   else if term.symbol.paramSymss exists { _.nonEmpty } then "[...]"
                   else ""
+                val access =
+                  if brackets.nonEmpty && brackets.head == '(' && (term.symbol.flags is Flags.Infix) then
+                    s"(<placed value> $name $brackets)"
+                  else
+                    s"<placed value>.$name$brackets"
                 errorAndCancel(
                   s"Illegal use of multitier construct. Remote selection using `$name` must be followed by a remote access invocation: " +
-                  s"`<placed value>.$name$access.<transmit to local peer>`${implicitHints.extensions(term.tpe)}", term.posInUserCode)
+                  s"`$access.<transmit to local peer>`${implicitHints.extensions(term.tpe)}", term.posInUserCode)
 
               super.transformTerm(term)(owner)
     end transformTerm
@@ -345,9 +380,9 @@ trait PlacedExpressions:
 
   private def eraseSubjectiveTypesInClosures(term: Term): Term = term match
     case Lambda(_, _) =>
-      val Block(stats, closure @ Closure(meth, tpe)) = term: @unchecked
+      val Block(stats, closure @ Closure(method, tpe)) = term: @unchecked
       if tpe exists { _.widenDealias.typeSymbol == symbols.subjective } then
-        Block.copy(term)(stats, Closure.copy(closure)(meth, None))
+        Block.copy(term)(stats, Closure.copy(closure)(method, None))
       else
         term
     case Block(stats, expr) =>
