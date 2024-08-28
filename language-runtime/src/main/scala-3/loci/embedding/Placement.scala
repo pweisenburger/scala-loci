@@ -34,6 +34,19 @@ object Placement:
     type Resolution[P] = Context[P] { type Peer = P }
 
     @compileTimeOnly("Expression must be placed on a peer.")
-    given fallback[P]: Resolution[P] = erased
+    def fallback[P]: Resolution[P] = erased
+
+    @compileTimeOnly("Expression must be placed on a peer.")
+    given fallback[P](using Context[?]): Resolution[P] = erased
+
+    sealed trait ResolutionWithFallback[+P]
+
+    sealed trait ResolutionWithFallbackFallback:
+      @compileTimeOnly("Expression must be placed on a peer.")
+      given fallback: ResolutionWithFallback[Any] = erased
+
+    object ResolutionWithFallback extends ResolutionWithFallbackFallback:
+      @compileTimeOnly("Expression must be placed on a peer.")
+      given resolution[P](using Resolution[P]): ResolutionWithFallback[P] = erased
   end Context
 end Placement

@@ -16,7 +16,7 @@ abstract class Connection[R, M] private[loci] {
 
 object Connection {
   implicit def connection[L, R, N, M](implicit
-    ev0: Placement.Context[L],
+    ev0: Placement.Context.Resolution[L],
     ev1: Tie[L, R, N],
     ev2: M =:= N): Connection[R, M] = erased(ev0, ev1, ev2)
 }

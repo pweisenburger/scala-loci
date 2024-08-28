@@ -28,7 +28,7 @@ object On:
       ${ impl.inferrableCanonicalPlacementTypeContextClosure[U per R on P]('{ v(using erased[Placement.Context[P]]) }) }
 
   trait Placed:
-    transparent inline def apply[T, P](using Placed.Context)(using Placement.Context.Resolution[P])(inline v: Placement.Context[P] ?=> T): T on P =
+    transparent inline def apply[T, P](using Placed.Context)(using Placement.Context.ResolutionWithFallback[P])(inline v: Placement.Context[P] ?=> T): T on P =
       ${ impl.inferrableCanonicalPlacementTypeContextClosure[T on P]('{ v(using erased[Placement.Context[P]](summon[Placed.Context])) }) }
 
   object Placed:
