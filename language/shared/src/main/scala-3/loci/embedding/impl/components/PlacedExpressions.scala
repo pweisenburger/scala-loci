@@ -478,8 +478,8 @@ trait PlacedExpressions:
       case _: TypeIdent =>
         if infix then
           val code = SourceCode(tree.pos.sourceFile)
-          val pos = code.forwardSkipToCode(tree.pos.end)
-          if pos < code.content.length && code.content(pos) == '[' then
+          val pos = code.forwardSkipToToken(tree.pos.end)
+          if pos < code.length && code(pos) == '[' then
             notationWarning()
       case _ =>
         notationWarning()

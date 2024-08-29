@@ -217,12 +217,12 @@ trait Commons:
   extension (pos: Position)
     def firstCodeLine =
       if pos.startLine != pos.endLine then
-        Position(pos.sourceFile, pos.start, SourceCode(pos.sourceFile).forwardSkipToLastCodeInLine(pos.start) + 1)
+        Position(pos.sourceFile, pos.start, SourceCode(pos.sourceFile).forwardSkipToLastTokenInLine(pos.start) + 1)
       else
         pos
     def lastCodeLine =
       if pos.startLine != pos.endLine then
-        Position(pos.sourceFile, SourceCode(pos.sourceFile).backwardSkipToLastCodeInLine(pos.end - 1), pos.end)
+        Position(pos.sourceFile, SourceCode(pos.sourceFile).backwardSkipToLastTokenInLine(pos.end - 1), pos.end)
       else
         pos
 

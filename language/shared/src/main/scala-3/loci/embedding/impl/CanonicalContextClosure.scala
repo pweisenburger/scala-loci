@@ -63,9 +63,9 @@ def inferrableCanonicalPlacementTypeContextClosure[R: Type](using Quotes)(v: Exp
       case PlacementContext(evidence, expr) => (Some(evidence), expr)
       case _ => (None, body)
 
-    val block @ Block(List(lambda: DefDef), closure @ Closure(meth, _)) =
+    val block @ Block(List(lambda: DefDef), closure @ Closure(method, _)) =
       Lambda(owner, contextMethodType[T, R], (symbol, _) => expr.changeOwner(symbol)): @unchecked
-    val result = Block.copy(block)(List(lambda), Closure.copy(closure)(meth, Some(tpe)))
+    val result = Block.copy(block)(List(lambda), Closure.copy(closure)(method, Some(tpe)))
 
     evidence.fold(result): evidence =>
       val privateWithin = if evidence.symbol.flags is Flags.Protected then evidence.symbol.protectedWithin else evidence.symbol.privateWithin
@@ -196,7 +196,7 @@ def inferrableCanonicalPlacementTypeContextClosure[R: Type](using Quotes)(v: Exp
             val pos = Position(
               Position.ofMacroExpansion.sourceFile,
               Position.ofMacroExpansion.start,
-              SourceCode(Position.ofMacroExpansion.sourceFile).forwardSkipToCode(Position.ofMacroExpansion.end) + 1)
+              SourceCode(Position.ofMacroExpansion.sourceFile).forwardSkipToToken(Position.ofMacroExpansion.end) + 1)
 
             // check whether the expanding function is the outer-most in the surrounding val or def
             if contains.invoke(pos, sourcePos.invoke(rhsTerm, context)) == true then

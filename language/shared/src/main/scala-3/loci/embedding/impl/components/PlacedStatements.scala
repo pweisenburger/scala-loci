@@ -222,10 +222,10 @@ trait PlacedStatements:
       placementInfo.canonical
 
   private def errorForExtraBindings(stat: Statement, placementConstructsBindings: List[Definition]): Unit =
-    val accaptableBindingsCount = stat match
+    val acceptableBindingsCount = stat match
       case PlacedStatement(_) | _: Term => 1
       case _ =>  0
-    placementConstructsBindings.drop(accaptableBindingsCount) foreach: binding =>
+    placementConstructsBindings.drop(acceptableBindingsCount) foreach: binding =>
       val bindingPosition = binding.posInUserCode
       val pos = if bindingPosition == Position.ofMacroExpansion then stat.posInUserCode else bindingPosition
       errorAndCancel("Illegal use of multitier construct.", pos.firstCodeLine)
@@ -262,11 +262,95 @@ trait PlacedStatements:
     val (placementConstructsBindings, hasNonSyntheticPlacedConstructBindings) = bindingsForPlacementConstructs(bindings)
     errorForExtraBindings(stat, placementConstructsBindings)
 
+    val isPlacementCompound =
+      bindings.iterator.flatten exists:
+        _.symbol.info.typeSymbol == symbols.lowestCommonSuperType
+
     val (pos, inferred) = statementTypeTreeInfo(stat)
 
     if inferred && (bindings.isEmpty || hasNonSyntheticPlacedConstructBindings) then
       errorAndCancel(s"Placed definitions without type ascription must be enclosed in a placed block: on[${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)}]", pos)
+    else if isPlacementCompound && hasNonSyntheticPlacedConstructBindings then
+      errorAndCancel("Illegal use of multitier construct.", stat.posInUserCode.firstCodeLine)
+
+    if !canceled then
+      checkPlacementNotation(stat, bindings)
+      checkPlacementCompoundNotation(stat, bindings)
   end checkPlacementType
+
+  private def checkPlacementCompoundNotation(stat: Statement, bindings: List[List[Definition]]) =
+    bindings.iterator.flatten foreach: binding =>
+      if binding.pos.sourceFile == stat.pos.sourceFile then
+        val code = SourceCode(binding.pos.sourceFile)
+        var end = code.backwardSkipToToken(code.backwardSkipToken(binding.pos.start))
+        while end >= 0 && (code(end) == '(' || code(end) == '{') do
+          end = code.backwardSkipToToken(end - 1)
+
+        val colon = end >= 0 && code(end) == ':'
+        if colon then
+          end = code.backwardSkipToToken(end - 1)
+          while end >= 0 && code(end) == ')' do
+            end = code.backwardSkipToToken(end - 1)
+
+        val typeArguments = end >= 0 && code(end) == ']'
+        if typeArguments then
+          end = code.backwardSkipToToken(code.backwardSkipToMatchingBracket(end) - 1)
+
+        var start = code.backwardSkipToken(end)
+        if start >= 0 && (!colon || typeArguments) then
+          val token = code.slice(start + 1, end + 1).mkString
+          if token == "and" || token == "`and`" then
+            start = code.backwardSkipToken(end)
+            val dot = start >= 0 && code(start) == '.'
+            if dot || typeArguments then
+              val construct =
+                if dot && colon then ".and:"
+                else "(on[...] { ... }) and (on[...] { ... })"
+              report.warning(
+                s"Discouraged placement compound notation. Expected notation: `$construct`",
+                Position(binding.pos.sourceFile, start, start))
+  end checkPlacementCompoundNotation
+
+  private def checkPlacementNotation(stat: Statement, bindings: List[List[Definition]]) =
+    bindings.iterator.flatten foreach: binding =>
+      if binding.pos.sourceFile == stat.pos.sourceFile then
+        val code = SourceCode(binding.pos.sourceFile)
+        var start, end, next = 0
+        var token = ""
+
+        inline def nextToken(from: Int) =
+          start = code.forwardSkipToToken(from)
+          end = code.forwardSkipToken(start)
+          next = code.forwardSkipToToken(end)
+
+        inline def makeToken() =
+          token = code.slice(start, end).mkString
+
+        nextToken(binding.pos.start)
+        while next < code.length && code(next) == '.' do
+          nextToken(next + 1)
+
+        makeToken()
+        if (token == "on" || token == "`on`") && next < code.length && code(next) == '[' then
+          start = next
+          end = code.forwardSkipToMatchingBracket(next) + 1
+          next = code.forwardSkipToToken(end)
+          if next < code.length && code(next) == '.' then
+            makeToken()
+            val peer = if token exists { ch => ch == '\r' || ch == '\n' } then "[...]" else token
+            val pos = Position(binding.pos.sourceFile, next, next)
+            nextToken(next + 1)
+            makeToken()
+            val construct =
+              if token == "local" || token == "`local`" then Some(" local")
+              else if token == "sbj" || token == "`sbj`" then Some(" sbj")
+              else if token == "apply" || token == "`apply`" then Some("")
+              else None
+
+            construct foreach: construct =>
+              val block = if next < code.length && code(next) == ':' then ":" else " { ... }"
+              report.warning(s"Discouraged placement notation. Expected notation: `on$peer$construct$block`", pos)
+  end checkPlacementNotation
 
   private class SingletonTypeChecker(stat: Statement) extends TypeMap(quotes):
     override def transform(tpe: TypeRepr) = tpe match
