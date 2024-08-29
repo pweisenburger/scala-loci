@@ -201,6 +201,12 @@ trait Commons:
       case Inlined(None, List(), MaybeInlined(body)) => Some(body)
       case _ => Some(term)
 
+  object VarArgs:
+    def unapply(terms: List[Term]): Some[List[Term]] = Some:
+      terms flatMap:
+        case Typed(Repeated(args, _), _)  => args
+        case arg => List(arg)
+
   final class PackedValueType[T](using t: Type[T]):
     opaque type Type = T
     given quoted.Type[Type] = t

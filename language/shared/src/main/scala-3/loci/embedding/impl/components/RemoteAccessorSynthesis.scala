@@ -225,13 +225,9 @@ trait RemoteAccessorSynthesis:
       case Apply(Apply(invocation @ TypeApply(Select(prefix, _), _ :: value :: _), List(lambda @ Lambda(List(_), block))), _)
           if term.symbol.maybeOwner == symbols.block && lambda.tpe.isContextFunctionType =>
         val captures =
-          if prefix.symbol.maybeOwner == symbols.capture then
-            prefix match
-              case Apply(_, List(Typed(Repeated(captures, _), _))) if prefix.symbol.maybeOwner == symbols.capture => captures
-              case Apply(_, captures) if prefix.symbol.maybeOwner == symbols.capture => captures
-              case _ => List.empty
-          else
-            List.empty
+          prefix match
+            case Apply(_, VarArgs(captures)) if prefix.symbol.maybeOwner == symbols.capture => captures
+            case _ => List.empty
         Some(value.tpe, captures map { _.tpe.widenTermRefByName }, invocation.posInUserCode)
       case _ =>
         None

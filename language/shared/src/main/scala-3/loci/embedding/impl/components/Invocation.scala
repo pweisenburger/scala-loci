@@ -10,7 +10,7 @@ import scala.collection.mutable
 
 @experimental
 trait Invocation:
-  this: Component & Commons & ErrorReporter & Placements & NonPlacements & Peers & AccessPath & PlacedValueSynthesis & RemoteAccessorSynthesis =>
+  this: Component & Commons & ErrorReporter & AccessNotation & Placements & NonPlacements & Peers & AccessPath & PlacedValueSynthesis & RemoteAccessorSynthesis =>
   import quotes.reflect.*
 
   private def name(symbol: Symbol) =
@@ -48,10 +48,17 @@ trait Invocation:
     case _ =>
       f(term)
 
-  private def flattenVarArgs(args: List[Term]) =
-    args flatMap:
-      case Typed(Repeated(args, _), _) => args
-      case arg => List(arg)
+  private def checkSelectionNotation(select: Select, selected: List[Term]) =
+    val code = SourceCode(select.qualifier.pos.sourceFile)
+    val index = code.forwardSkipToToken(select.qualifier.pos.end)
+    if index < code.length && code(index) == '.' then
+      val access = select.qualifier.pos.sourceCode filterNot { _ exists { ch => ch == '\r' || ch == '\n' } } getOrElse "<placed value>"
+      val args = selected match
+        case List(selected) => selected.pos.sourceCode filterNot { _ exists Character.isWhitespace } getOrElse "<...>"
+        case _ => "(...)"
+      report.warning(
+        s"Discouraged placed value selection notation. Expected notation: `$access ${select.name} $args`",
+        Position(select.qualifier.pos.sourceFile, index, index))
 
   private object SubjectiveLocalAccess:
     def unapply(term: Term) = term match
@@ -63,8 +70,9 @@ trait Invocation:
 
   private object Selection:
     def unapply(term: Term) = term match
-      case Apply(TypeApply(Select(value, names.from), List(remoteTypeTree)), remotes) if term.symbol.maybeOwner == symbols.placed =>
-        Some(value, Some(Left(remoteTypeTree.tpe, flattenVarArgs(remotes))))
+      case Apply(TypeApply(select @ Select(value, names.from), List(remoteTypeTree)), VarArgs(remotes)) if term.symbol.maybeOwner == symbols.placed =>
+        checkSelectionNotation(select, remotes)
+        Some(value, Some(Left(remoteTypeTree.tpe, remotes)))
       case TypeApply(Select(value, names.from), List(remoteTypeTree)) if term.symbol.maybeOwner == symbols.placed =>
         Some(value, Some(Right(remoteTypeTree.tpe)))
       case _ =>
@@ -72,19 +80,27 @@ trait Invocation:
 
   private object CallSelection:
     def unapply(term: Term) = term match
-      case Apply(TypeApply(_, remoteTypeTree :: _), remotes) if term.symbol.maybeOwner == symbols.select =>
-        Some(Left(remoteTypeTree.tpe, flattenVarArgs(remotes)))
+      case Apply(typeApply @ TypeApply(_, remoteTypeTree :: _), VarArgs(remotes)) if term.symbol.maybeOwner == symbols.select =>
+        Some(Left(remoteTypeTree.tpe, remotes), () => s"remote(${argsNotation(remotes)})", notationCheck(typeApply, infix = false))
       case TypeApply(_, List(remoteTypeTree)) if term.symbol == symbols.remoteApply =>
-        Some(Right(remoteTypeTree.tpe))
+        val (arg, pos) = notationPositionCheck(term.pos, infix = false, applied = true) match
+          case (Some(arg), pos) if arg forall { ch => ch != '\r' && ch != '\n' } => (arg, pos)
+          case (_, pos) => ("...", pos)
+        Some(Right(remoteTypeTree.tpe), () => s"remote[$arg]", pos)
       case _ =>
         None
 
   private object Call:
     def unapply(term: Term) = term match
-      case Apply(Apply(TypeApply(Select(selection, _), _), List(value)), _) if term.symbol.maybeOwner == symbols.call =>
-        selection match
-          case CallSelection(selection) => Some(value, Some(selection))
-          case _ => Some(value, None)
+      case Apply(Apply(typeApply @ TypeApply(Select(selection, _), _), List(value)), _) if term.symbol.maybeOwner == symbols.call =>
+        val (result, construct, pos) = selection match
+          case CallSelection(selection, construct, pos) =>
+            ((value, Some(selection)), () => s"${construct()} call", pos orElse notationCheck(typeApply, infix = true))
+          case _ =>
+            ((value, None), () => "remote call", notationCheck(typeApply, infix = true))
+        pos foreach: pos =>
+          report.warning(s"Discouraged remote call notation. Expected notation: `${construct()}`", pos)
+        Some(result)
       case _ =>
         None
 

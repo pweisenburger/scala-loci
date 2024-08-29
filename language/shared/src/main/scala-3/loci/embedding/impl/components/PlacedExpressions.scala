@@ -15,13 +15,11 @@ trait PlacedExpressions:
 
   private object PlacementLiftingConversion:
     def unapply(term: Term) = term match
-      case Inlined(Some(call), List(conversion: ValDef), erased @ MaybeTyped(Apply(_, List(rhs))))
+      case Inlined(Some(call), List(conversion: ValDef), erased @ MaybeTyped(Apply(_, VarArgs(List(MaybeInlined(rhs))))))
         if call.symbol == symbols.placed.companionModule.moduleClass &&
            !(conversion.tpt.tpe =:= TypeRepr.of[Nothing]) && conversion.tpt.tpe <:< types.conversion &&
            !(erased.tpe =:= TypeRepr.of[Nothing]) && erased.tpe <:< types.placed =>
-        rhs match
-          case MaybeTyped(Repeated(List(MaybeInlined(rhs)), _)) => Some(rhs)
-          case _ => Some(rhs)
+        Some(rhs)
       case Inlined(Some(call), List(conversion: ValDef, ValDef(_, _, Some(MaybeInlined(rhs)))), erased @ MaybeTyped(Apply(_, List(_))))
         if call.symbol == symbols.placed.companionModule.moduleClass &&
            !(conversion.tpt.tpe =:= TypeRepr.of[Nothing]) && conversion.tpt.tpe <:< types.conversion &&

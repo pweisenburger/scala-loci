@@ -11,43 +11,63 @@ import scala.collection.immutable.ListMap
 
 @experimental
 trait PlacedBlocks:
-  this: Component & Commons & ErrorReporter & Annotations & Placements =>
+  this: Component & Commons & ErrorReporter & AccessNotation & Annotations & Placements =>
   import quotes.reflect.*
 
   private object Selection:
     def unapply(term: Term) = term match
-      case Apply(TypeApply(_, remoteTypeTree :: _), remotes) if term.symbol.maybeOwner == symbols.select =>
-        Some(remoteTypeTree, remotes)
+      case Apply(typeApply @ TypeApply(fun, remoteTypeTree :: _), remotes) if term.symbol.maybeOwner == symbols.select =>
+        Some(remoteTypeTree, remotes, () => s"on(${argsNotation(remotes)})", notationCheck(typeApply, infix = false))
       case _ =>
         None
 
   private object Run:
     def unapply(term: Term) = term match
-      case Apply(TypeApply(Select(prefix, _), _), _) if prefix.tpe derivesFrom symbols.run =>
+      case Apply(typeApply @ TypeApply(Select(prefix, _), _), _) if prefix.tpe derivesFrom symbols.run =>
         prefix match
-          case Selection(remoteTypeTree, remotes) => Some(Some(remoteTypeTree, remotes))
-          case _ => Some(None)
-      case _ => None
+          case Selection(remoteTypeTree, remotes, construct, pos) =>
+            Some(Some(remoteTypeTree, remotes), () => s"${construct()}.run", pos orElse notationCheck(typeApply, infix = false))
+          case _ =>
+            val (arg, pos) = notationPositionCheck(prefix.pos, infix = false, applied = true) match
+              case (Some(arg), pos) if arg forall { ch => ch != '\r' && ch != '\n' } => (arg, pos)
+              case (_, pos) => ("...", pos)
+            Some(None, () => s"on[$arg].run", pos orElse notationCheck(typeApply, infix = false))
+      case _ =>
+        None
 
   private object Capture:
     def unapply(term: Term) = term match
-      case Apply(Select(Run(selection), _), captures) if term.symbol.maybeOwner == symbols.capture =>
-        captures match
-          case List(Typed(Repeated(captures, _), _)) => Some(selection, captures)
-          case _ => Some(selection, captures)
+      case term @ Apply(Select(Run(selection, construct, pos), _), VarArgs(captures)) if term.symbol.maybeOwner == symbols.capture =>
+        def capture = notationPosition(term).sourceCode filterNot { _ exists { ch => ch == '\r' || ch == '\n' } } getOrElse "capture(...)"
+        if captures.isEmpty then
+          Some(selection, captures, construct, pos, Some(notationPosition(term).firstCodeLine))
+        else
+          Some(selection, captures, () => s"${construct()}.$capture", pos, None)
       case _ =>
         None
 
   private object PlacedBlock:
     def unapply(term: Term) = term match
-      case Apply(Apply(TypeApply(Select(prefix, name), _ :: value :: _), List(lambda @ Lambda(List(arg), block))), _)
+      case Apply(Apply(typeApply @ TypeApply(Select(prefix, name), _ :: value :: _), List(lambda @ Lambda(List(arg), block))), _)
           if term.symbol.maybeOwner == symbols.block && lambda.tpe.isContextFunctionType =>
+        def check = notationCheck(typeApply, infix = name != names.apply)
         val List(remote, local, from) = prefix.tpe.baseType(symbols.block).typeArgs: @unchecked
-        prefix match
-          case Run(selection) => Some(selection, List.empty, value.tpe, remote, local, from, name != names.apply, block, arg.symbol.owner)
-          case Capture(selection, captures) => Some(selection, captures, value.tpe, remote, local, from, name != names.apply, block, arg.symbol.owner)
-          case _ => None
-      case _ => None
+        val result = prefix match
+          case Run(selection, construct, pos) =>
+            Some((selection, List.empty, value.tpe, remote, local, from, name != names.apply, block, arg.symbol.owner), construct, pos orElse check, None)
+          case Capture(selection, captures, construct, pos, posCaptureWarning) =>
+            Some((selection, captures, value.tpe, remote, local, from, name != names.apply, block, arg.symbol.owner), construct, pos orElse check, posCaptureWarning)
+          case _ =>
+            None
+        result map: (result, construct, pos, posCaptureWarning) =>
+          if pos.isDefined then
+            val access = if name != names.apply then s" $name" else ""
+            report.warning(s"Discouraged placed block notation. Expected notation: `${construct()}$access`", pos.get)
+          else if posCaptureWarning.isDefined then
+            report.info("Placed block does not require `capture` clause.", posCaptureWarning.get)
+          result
+      case _ =>
+        None
 
   private object PlacedBlockInvocation:
     def unapply(term: Term) =

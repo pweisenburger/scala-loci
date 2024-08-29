@@ -17,6 +17,7 @@ object Multitier:
       Component.withQuotes(quotes),
       Commons,
       ErrorReporter,
+      AccessNotation,
       Annotations,
       SymbolTrees,
       Placements,

@@ -108,7 +108,7 @@ trait PlacedStatements:
     val placementConstructBindings = bindings flatMap:
       // non-synthetic bindings for `placed` construct
       // (represented by the `Placement.Context[P]` argument that contains an `Placed.Context` term)
-      case binding @ ValDef(_, tpt, Some(Apply(_, List(Typed(Repeated(List(expr), _), _)))))
+      case binding @ ValDef(_, tpt, Some(Apply(_, VarArgs(List(expr)))))
         if !(tpt.tpe =:= TypeRepr.of[Nothing]) &&
            tpt.tpe <:< types.context &&
            !(expr.tpe =:= TypeRepr.of[Nothing]) &&
@@ -298,7 +298,7 @@ trait PlacedStatements:
 
         var start = code.backwardSkipToken(end)
         if start >= 0 && (!colon || typeArguments) then
-          val token = code.slice(start + 1, end + 1).mkString
+          val token = code.view.slice(start + 1, end + 1).mkString
           if token == "and" || token == "`and`" then
             start = code.backwardSkipToken(end)
             val dot = start >= 0 && code(start) == '.'
@@ -324,7 +324,7 @@ trait PlacedStatements:
           next = code.forwardSkipToToken(end)
 
         inline def makeToken() =
-          token = code.slice(start, end).mkString
+          token = code.view.slice(start, end).mkString
 
         nextToken(binding.pos.start)
         while next < code.length && code(next) == '.' do
@@ -335,21 +335,31 @@ trait PlacedStatements:
           start = next
           end = code.forwardSkipToMatchingBracket(next) + 1
           next = code.forwardSkipToToken(end)
-          if next < code.length && code(next) == '.' then
-            makeToken()
-            val peer = if token exists { ch => ch == '\r' || ch == '\n' } then "[...]" else token
-            val pos = Position(binding.pos.sourceFile, next, next)
-            nextToken(next + 1)
-            makeToken()
-            val construct =
-              if token == "local" || token == "`local`" then Some(" local")
-              else if token == "sbj" || token == "`sbj`" then Some(" sbj")
-              else if token == "apply" || token == "`apply`" then Some("")
-              else None
+          val dot = next < code.length && code(next) == '.'
 
-            construct foreach: construct =>
-              val block = if next < code.length && code(next) == ':' then ":" else " { ... }"
-              report.warning(s"Discouraged placement notation. Expected notation: `on$peer$construct$block`", pos)
+          makeToken()
+          val peer = if token exists { ch => ch == '\r' || ch == '\n' } then "[...]" else token
+
+          val pos =
+            if dot then
+              val pos = Position(binding.pos.sourceFile, next, next)
+              nextToken(next + 1)
+              makeToken()
+              pos
+            else
+              nextToken(next)
+              makeToken()
+              Position(binding.pos.sourceFile, start, end)
+
+          val construct =
+            if dot && (token == "local" || token == "`local`") then Some(" local")
+            else if dot && (token == "sbj" || token == "`sbj`") then Some(" sbj")
+            else if token == "apply" || token == "`apply`" then Some("")
+            else None
+
+          construct foreach: construct =>
+            val block = if next < code.length && code(next) == ':' then ":" else " { ... }"
+            report.warning(s"Discouraged placement notation. Expected notation: `on$peer$construct$block`", pos)
   end checkPlacementNotation
 
   private class SingletonTypeChecker(stat: Statement) extends TypeMap(quotes):
