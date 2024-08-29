@@ -159,6 +159,25 @@ object PlacedClean extends PlacedCleanAmbiguousResolutionBarrier:
     val local = Symbol.requiredPackage("loci.language").typeMember("Local")
     val unit = defn.UnitClass.typeRef
 
+    extension (self: TypeRepr)
+      inline def eq(other: TypeRepr): Boolean = self match
+        case self: AnyRef => other match
+          case other: AnyRef => self eq other
+          case _ => self == other
+        case _ => self == other
+
+      def cleanRecursiveDisjunction(tpe: TypeRepr): TypeRepr = self match
+        case OrType(left, right) =>
+          if left eq tpe then
+            if right eq tpe then report.errorAndAbort(s"Unexpected recursive type: ${tpe.safeShow(Printer.SafeTypeReprShortCode)}")
+            else right.cleanRecursiveDisjunction(tpe)
+          else
+            if right eq tpe then left.cleanRecursiveDisjunction(tpe)
+            else OrType(left.cleanRecursiveDisjunction(tpe), right.cleanRecursiveDisjunction(tpe))
+        case _ =>
+          self
+    end extension
+
     object processor extends TypeMap(quotes):
       override def transform(tpe: TypeRepr) = tpe match
         case _ if tpe.typeSymbol.flags is Flags.Opaque => tpe
@@ -172,8 +191,8 @@ object PlacedClean extends PlacedCleanAmbiguousResolutionBarrier:
           case '[ Nothing ] | '[ Null ] => tpe
           case '[ language.on[t `per` r, p] ] => unit
           case '[ embedding.on[t `per` r, p] ] => unit
-          case '[ language.on[t, p] ] => transform(TypeRepr.of[t])
-          case '[ embedding.on[t, p] ] => transform(TypeRepr.of[t])
+          case '[ language.on[t, p] ] => transform(TypeRepr.of[t].cleanRecursiveDisjunction(tpe))
+          case '[ embedding.on[t, p] ] => transform(TypeRepr.of[t].cleanRecursiveDisjunction(tpe))
           case '[ t `fromMultiple` p ] => unit
           case '[ t `fromSingle` p ] => unit
           case '[ t `from` p ] => unit

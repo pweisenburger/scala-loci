@@ -20,22 +20,17 @@ trait PlacedExpressions:
            !(conversion.tpt.tpe =:= TypeRepr.of[Nothing]) && conversion.tpt.tpe <:< types.conversion &&
            !(erased.tpe =:= TypeRepr.of[Nothing]) && erased.tpe <:< types.placed =>
         rhs match
-          case MaybeTyped(Repeated(List(Inlined(_, List(), rhs)), _)) => Some(rhs)
-          case MaybeTyped(Repeated(List(rhs), _)) => Some(rhs)
+          case MaybeTyped(Repeated(List(MaybeInlined(rhs)), _)) => Some(rhs)
           case _ => Some(rhs)
-      case Inlined(Some(call), List(conversion: ValDef, ValDef(_, _, Some(rhs))), erased @ MaybeTyped(Apply(_, List(_))))
+      case Inlined(Some(call), List(conversion: ValDef, ValDef(_, _, Some(MaybeInlined(rhs)))), erased @ MaybeTyped(Apply(_, List(_))))
         if call.symbol == symbols.placed.companionModule.moduleClass &&
            !(conversion.tpt.tpe =:= TypeRepr.of[Nothing]) && conversion.tpt.tpe <:< types.conversion &&
            !(erased.tpe =:= TypeRepr.of[Nothing]) && erased.tpe <:< types.placed =>
-        rhs match
-          case Inlined(_, List(), rhs) => Some(rhs)
-          case _ => Some(rhs)
-      case Apply(Select(conversion, _), List(rhs))
+        Some(rhs)
+      case Apply(Select(conversion, _), List(MaybeInlined(rhs)))
         if conversion.symbol.exists && conversion.symbol.owner == symbols.placed.companionModule.moduleClass &&
            !(conversion.tpe =:= TypeRepr.of[Nothing]) && conversion.tpe <:< types.conversion =>
-        rhs match
-          case Inlined(_, List(), rhs) => Some(rhs)
-          case _ => Some(rhs)
+        Some(rhs)
       case _ =>
         None
 
@@ -60,7 +55,7 @@ trait PlacedExpressions:
 
   private object PlacedOrNonPlacedStatement:
     def unapply(stat: Statement) = stat match
-      case PlacedStatement(statstat) => Some(stat)
+      case PlacedStatement(stat) => Some(stat)
       case NonPlacedStatement(stat) => Some(stat)
       case _ => None
 

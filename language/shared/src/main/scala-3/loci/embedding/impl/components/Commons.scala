@@ -33,6 +33,7 @@ trait Commons:
     val `language.on` = Symbol.requiredPackage("loci.language").typeMember("on")
     val `embedding.on` = Symbol.requiredPackage("loci.embedding").typeMember("on")
     val `embedding.of` = Symbol.requiredPackage("loci.embedding").typeMember("of")
+    val `embedding.placed` = Symbol.requiredPackage("loci.embedding").typeMember("placed")
     val from = Symbol.requiredPackage("loci.embedding").typeMember("from")
     val fromSingle = Symbol.requiredPackage("loci.embedding").typeMember("fromSingle")
     val fromMultiple = Symbol.requiredPackage("loci.embedding").typeMember("fromMultiple")
@@ -192,7 +193,12 @@ trait Commons:
 
   object MaybeTyped:
     def unapply(term: Term): Some[Term] = term match
-      case Typed(expr, _) => unapply(expr)
+      case Typed(MaybeTyped(expr), _) => Some(expr)
+      case _ => Some(term)
+
+  object MaybeInlined:
+    def unapply(term: Term): Some[Term] = term match
+      case Inlined(None, List(), MaybeInlined(body)) => Some(body)
       case _ => Some(term)
 
   final class PackedValueType[T](using t: Type[T]):

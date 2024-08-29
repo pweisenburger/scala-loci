@@ -70,7 +70,7 @@ trait PlacedStatements:
              (bindings forall { _.symbol.info.typeSymbol == symbols.lowestCommonSuperType }) &&
              (erased.symbol == symbols.erased || erased.symbol == symbols.erasedArgs) =>
         stats.foldLeft[Option[(List[Definition], List[(PlacementInfo, Term)])]](Some(bindings, List.empty)):
-          case (Some(bindings, compounds), Inlined(_, List(), closure @ Lambda(List(arg), body)))
+          case (Some(bindings, compounds), MaybeInlined(closure @ Lambda(List(arg), body)))
             if !(arg.tpt.tpe =:= TypeRepr.of[Nothing]) &&
                arg.tpt.tpe <:< types.context &&
                arg.symbol.isImplicit =>
