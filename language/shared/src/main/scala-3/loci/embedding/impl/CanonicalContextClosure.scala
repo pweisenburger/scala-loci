@@ -14,7 +14,7 @@ def inferrableCanonicalPlacementTypeContextClosure[R: Type](using Quotes)(v: Exp
   import quotes.reflect.*
   import info.*
 
-  object info extends Component.withQuotes(quotes), Commons, Placements, ErrorReporter, PlacedTransformations
+  object info extends Component.withQuotes(quotes), Commons, ErrorReporter, Placements, NonPlacements, PlacedTransformations
 
   object PlacementEvidence:
     def unapply(evidence: ValDef): Boolean =

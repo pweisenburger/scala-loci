@@ -192,9 +192,12 @@ trait PlacedValueSynthesis:
         case NonPlacedStatement(ValDef(_, _, Some(rhs))) => rhs
         case NonPlacedStatement(DefDef(_, _, _, Some(rhs))) => rhs
 
-      val peers = rhs.toList flatMap: rhs =>
-        extractPlacementBodies(rhs) map: (_, peer) =>
-          peer
+      val peers =
+        rhs.toList flatMap: rhs =>
+          extractPlacementBodies(rhs) flatMap: (_, tpe) =>
+            tpe flatMap: tpe =>
+              PlacementInfo(tpe) map: placementInfo =>
+                placementInfo.peerType.typeSymbol
 
       (if peers contains peer then peers else peer :: peers) filterNot { _ == defn.AnyClass }
     end peers

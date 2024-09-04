@@ -85,17 +85,9 @@ trait PlacedExpressions:
         else
           None
 
-  extension (self: PlacementConstruct) private inline def isOneOf(constructs: PlacementConstruct*) =
-    constructs contains self
-
-  private def selectionType(tpe: TypeRepr) = tpe match
-    case AppliedType(_, _) | Refinement(_, _, _) =>
-      !(tpe =:= TypeRepr.of[Nothing]) &&
-      !(tpe <:< types.`language.on`) &&
-      !(tpe <:< types.`embedding.on`) &&
-      (tpe <:< types.from || tpe <:< types.fromSingle || tpe <:< types.fromMultiple)
-    case _ =>
-      false
+    extension (self: PlacementConstruct) inline def isOneOf(constructs: PlacementConstruct*) =
+      constructs contains self
+  end PlacementConstruct
 
   private def checkPlacementTypes(tpe: TypeRepr, pos: Position, message: String) =
     val symbol = tpe.typeSymbol
@@ -108,37 +100,12 @@ trait PlacedExpressions:
          tpe <:< types.placedValue || tpe <:< types.subjective) then
       errorAndCancel(message, pos.firstCodeLine)
 
-  private class TypePlacementTypesEraser(pos: Position, checkOnly: Boolean) extends TypeMap(quotes):
+  private class PlacementTypesEraser(pos: Position, checkOnly: Boolean) extends PlacementFromPlacedValueTypeEraser:
     override def transform(tpe: TypeRepr) =
-      val erasedType =
-        if !checkOnly then
-          val corrected = tpe match
-            case AndType(AppliedType(tycon, args), right) if tycon.typeSymbol == symbols.placed && args.last =:= right =>
-              symbols.`embedding.on`.typeRef.appliedTo(args.reverse)
-            case _ =>
-              tpe
-
-          if selectionType(corrected) then
-            TypeRepr.of[Unit]
-          else
-            PlacementInfo(corrected) match
-              case Some(placementInfo) =>
-                if placementInfo.modality.subjective then
-                  TypeRepr.of[Unit]
-                else
-                  transform(placementInfo.valueType)
-              case _ =>
-                NonPlacementInfo(corrected) match
-                  case Some(nonPlacementInfo) =>
-                    transform(nonPlacementInfo.valueType)
-                  case _ =>
-                    super.transform(corrected)
-        else
-          super.transform(tpe)
+      val erasedType = super.transform(tpe)
+      val termSymbol = erasedType.termSymbol
 
       checkPlacementTypes(erasedType, pos, "Illegal use of value with placement type.")
-
-      val termSymbol = erasedType.termSymbol
 
       def underExpansion(symbol: Symbol): Boolean =
         symbol == Symbol.spliceOwner || symbol.maybeOwner.exists && underExpansion(symbol.maybeOwner)
@@ -146,11 +113,11 @@ trait PlacedExpressions:
       if !canceled && termSymbol.exists && (isMultitierModule(termSymbol.owner) || !underExpansion(termSymbol)) then
         val widenedErasedType = erasedType.widen
         if widenedErasedType != erasedType && isMultitierModule(erasedType.termSymbol.owner) then
-          TypePlacementTypesEraser(pos, checkOnly = true).transform(widenedErasedType)
+          PlacementTypesEraser(pos, checkOnly = true).transform(widenedErasedType)
 
       erasedType
     end transform
-  end TypePlacementTypesEraser
+  end PlacementTypesEraser
 
   private abstract class AdapatingDefinitionTypeCopier(substitute: (Symbol, Symbol) => Unit, replace: (Symbol, Symbol) => Unit) extends SafeTreeMap(quotes):
     def copyAnnotations(from: Symbol, to: Symbol) =
@@ -221,7 +188,7 @@ trait PlacedExpressions:
       extends AdapatingDefinitionTypeCopier(substitute, replace):
 
     def adaptedDefinitionType(stat: ValDef | DefDef) =
-      TypePlacementTypesEraser(stat.posInUserCode, checkOnly).transform(stat.symbol.info)
+      PlacementTypesEraser(stat.posInUserCode, checkOnly).transform(stat.symbol.info)
 
     override def transformStatement(stat: Statement)(owner: Symbol) = stat match
       case stat: ClassDef if isMultitierModule(stat.symbol) =>
@@ -304,7 +271,7 @@ trait PlacedExpressions:
           case _ => term match
             // check type of identifiers
             case _: Ref if checkOnly =>
-              TypePlacementTypesEraser(term.posInUserCode, checkOnly = true).transform(term.tpe)
+              PlacementTypesEraser(term.posInUserCode, checkOnly = true).transform(term.tpe)
               super.transformTerm(term)(owner)
 
             // check that there are no remaining multitier terms
@@ -331,7 +298,7 @@ trait PlacedExpressions:
       // check inferred type trees and transform them to erase placement types (if possible)
       case Inferred() =>
         if !canceled then
-          val eraser = TypePlacementTypesEraser(tree.posInUserCode, checkOnly)
+          val eraser = PlacementTypesEraser(tree.posInUserCode, checkOnly)
           val tpe = eraser.transform(tree.tpe)
           if checkOnly || canceled || tpe == tree.tpe then tree else TypeTree.of(using tpe.asType)
         else
@@ -347,7 +314,7 @@ trait PlacedExpressions:
         checkPlacementTypes(tree.tpe, pos, "Illegal use of multitier construct.")
         val transformTree = super.transformTypeTree(tree)(owner)
         if !canceled then
-          TypePlacementTypesEraser(transformTree.posInUserCode, checkOnly = true).transform(transformTree.tpe)
+          PlacementTypesEraser(transformTree.posInUserCode, checkOnly = true).transform(transformTree.tpe)
         transformTree
     end transformTypeTree
   end ExpressionPlacementTypesEraser
@@ -366,7 +333,7 @@ trait PlacedExpressions:
     override def traverseTree(tree: Tree)(owner: Symbol) = tree match
       case Lambda(_, _) =>
         val Block(_, Closure(_, tpe)) = tree: @unchecked
-        tpe foreach { TypePlacementTypesEraser(tree.posInUserCode, checkOnly = true).transform(_) }
+        tpe foreach { PlacementTypesEraser(tree.posInUserCode, checkOnly = true).transform(_) }
         super.traverseTree(tree)(owner)
       case _ =>
         super.traverseTree(tree)(owner)
@@ -490,7 +457,7 @@ trait PlacedExpressions:
 
     tpt match
       case Inferred() | Applied(Inferred(), List(Inferred(), _)) =>
-        val eraser = TypePlacementTypesEraser(tpt.posInUserCode, checkOnly = true)
+        val eraser = PlacementTypesEraser(tpt.posInUserCode, checkOnly = true)
         PlacementInfo(tpt.tpe) match
           case Some(placementInfo) =>
             eraser.transform(placementInfo.valueType)

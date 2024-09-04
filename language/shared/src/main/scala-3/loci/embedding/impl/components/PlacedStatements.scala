@@ -6,7 +6,9 @@ package components
 import utility.reflectionExtensions.*
 
 import scala.annotation.experimental
+import scala.collection.mutable
 import scala.quoted.*
+import scala.util.control.NonFatal
 
 @experimental
 trait PlacedStatements:
@@ -185,7 +187,7 @@ trait PlacedStatements:
       val PlacedExpression(bindings, expr) = rhs
 
       val (placementConstructsBindings, _) = bindingsForPlacementConstructs(bindings)
-      errorForExtraBindings(stat, placementConstructsBindings)
+      checkBindings(stat, placementConstructsBindings)
 
       expr match
         case block @ Lambda(_, _) if block.tpe.isContextFunctionType =>
@@ -221,7 +223,13 @@ trait PlacedStatements:
           s"${System.lineSeparator}Placement types are imported by: import loci.language.*", pos)
       placementInfo.canonical
 
-  private def errorForExtraBindings(stat: Statement, placementConstructsBindings: List[Definition]): Unit =
+  private def statementTypeTreeInfo(stat: Statement) = stat match
+    case ValDef(_, Inferred(), _) | DefDef(_, _, Inferred(), _) => (stat.posInUserCode.firstCodeLine, true)
+    case ValDef(_, tpt, _) => (tpt.posInUserCode, false)
+    case DefDef(_, _, tpt, _) => (tpt.posInUserCode, false)
+    case _ => (stat.posInUserCode.firstCodeLine, false)
+
+  private def checkBindings(stat: Statement, placementConstructsBindings: List[Definition]): Unit =
     val acceptableBindingsCount = stat match
       case PlacedStatement(_) | _: Term => 1
       case _ =>  0
@@ -230,10 +238,10 @@ trait PlacedStatements:
       val pos = if bindingPosition == Position.ofMacroExpansion then stat.posInUserCode else bindingPosition
       errorAndCancel("Illegal use of multitier construct.", pos.firstCodeLine)
 
-  private def errorForExtraBindings(stat: Statement, placementConstructsBindings: Iterable[List[Definition]]): Unit =
+  private def checkBindings(stat: Statement, placementConstructsBindings: Iterable[List[Definition]]): Unit =
     placementConstructsBindings.iterator.zipWithIndex foreach: (placementConstructsBindings, index) =>
       if index == 0 || !canceled then
-        errorForExtraBindings(stat, placementConstructsBindings)
+        checkBindings(stat, placementConstructsBindings)
 
   private def checkPeerType(stat: Statement, peerType: TypeRepr, module: ClassDef, statement: String, relation: String): Unit =
     if PeerInfo(peerType).isEmpty then
@@ -246,21 +254,19 @@ trait PlacedStatements:
         s"but is $relation peer ${peerType.safeShow}",
         stat.posInUserCode.firstCodeLine)
 
-  private def statementTypeTreeInfo(stat: Statement) = stat match
-    case ValDef(_, Inferred(), _) | DefDef(_, _, Inferred(), _) => (stat.posInUserCode.firstCodeLine, true)
-    case ValDef(_, tpt, _) => (tpt.posInUserCode, false)
-    case DefDef(_, _, tpt, _) => (tpt.posInUserCode, false)
-    case _ => (stat.posInUserCode.firstCodeLine, false)
-
-  private def checkPlacementType(stat: Statement, bindings: List[List[Definition]], placementInfo: PlacementInfo, module: ClassDef): Unit =
-    val (statement, subjectiveStatement) = stat match
+  private def checkPlacementInfo(definition: Statement, stat: Statement, placementInfo: PlacementInfo, module: ClassDef): Unit =
+    val (statement, subjectiveStatement) = definition match
+      case _ if definition != stat => ("Placement compound", "Subjective placement compound")
       case _: ValDef | _: DefDef => ("Placed definition", "Subjective placed definition")
       case _ => ("Placed statement", "Subjective placed statement")
     checkPeerType(stat, placementInfo.peerType, module, statement, "placed on")
     placementInfo.modality.subjectivePeerType foreach { checkPeerType(stat, _, module, subjectiveStatement, "subjective to") }
 
+  private def checkPlacementBindings(stat: Statement, bindings: List[List[Definition]], placementInfo: PlacementInfo, module: ClassDef): Unit =
     val (placementConstructsBindings, hasNonSyntheticPlacedConstructBindings) = bindingsForPlacementConstructs(bindings)
-    errorForExtraBindings(stat, placementConstructsBindings)
+
+    checkPlacementInfo(stat, stat, placementInfo, module)
+    checkBindings(stat, placementConstructsBindings)
 
     val isPlacementCompound =
       bindings.iterator.flatten exists:
@@ -274,9 +280,9 @@ trait PlacedStatements:
       errorAndCancel("Illegal use of multitier construct.", stat.posInUserCode.firstCodeLine)
 
     if !canceled then
-      checkPlacementNotation(stat, bindings)
+      checkPlacementNotation(placementInfo, stat, bindings)
       checkPlacementCompoundNotation(stat, bindings)
-  end checkPlacementType
+  end checkPlacementBindings
 
   private def checkPlacementCompoundNotation(stat: Statement, bindings: List[List[Definition]]) =
     bindings.iterator.flatten foreach: binding =>
@@ -311,10 +317,15 @@ trait PlacedStatements:
                 Position(binding.pos.sourceFile, start, start))
   end checkPlacementCompoundNotation
 
-  private def checkPlacementNotation(stat: Statement, bindings: List[List[Definition]]) =
+  private def checkPlacementNotation(placementInfo: PlacementInfo, stat: Statement, bindings: List[List[Definition]]) =
+    val code = SourceCode(stat.pos.sourceFile)
+    val definitionStart = stat match
+      case ValDef(_, tpt, _) => tpt.pos.end
+      case DefDef(_, _, tpt, _) => tpt.pos.end
+      case _ => stat.pos.start
+
     bindings.iterator.flatten foreach: binding =>
       if binding.pos.sourceFile == stat.pos.sourceFile then
-        val code = SourceCode(binding.pos.sourceFile)
         var start, end, next = 0
         var token = ""
 
@@ -326,11 +337,21 @@ trait PlacedStatements:
         inline def makeToken() =
           token = code.view.slice(start, end).mkString
 
-        nextToken(binding.pos.start)
+        nextToken(math.max(binding.pos.start, definitionStart))
+        while start < code.length && code(start) == '=' do
+          nextToken(next)
+        while start < code.length && (code(start) == '(' || code(start) == '{') do
+          nextToken(next)
         while next < code.length && code(next) == '.' do
           nextToken(next + 1)
 
         makeToken()
+        if token == "and" || token == "`and`" then
+          nextToken(next)
+          while start < code.length && (code(start) == '(' || code(start) == '{' || code(start) == ':') do
+            nextToken(next)
+          makeToken()
+
         if (token == "on" || token == "`on`") && next < code.length && code(next) == '[' then
           start = next
           end = code.forwardSkipToMatchingBracket(next) + 1
@@ -342,25 +363,117 @@ trait PlacedStatements:
 
           val pos =
             if dot then
-              val pos = Position(binding.pos.sourceFile, next, next)
+              val pos = Position(stat.pos.sourceFile, next, next)
               nextToken(next + 1)
               makeToken()
               pos
             else
               nextToken(next)
               makeToken()
-              Position(binding.pos.sourceFile, start, end)
+              Position(stat.pos.sourceFile, start, end)
+
+          val local = token == "local" || token == "`local`"
+          val sbj = token == "sbj" || token == "`sbj`"
+          val apply = token == "apply" || token == "`apply`"
 
           val construct =
-            if dot && (token == "local" || token == "`local`") then Some(" local")
-            else if dot && (token == "sbj" || token == "`sbj`") then Some(" sbj")
-            else if token == "apply" || token == "`apply`" then Some("")
+            if dot && local then Some(" local")
+            else if dot && sbj then Some(" sbj")
+            else if apply then Some("")
             else None
 
           construct foreach: construct =>
             val block = if next < code.length && code(next) == ':' then ":" else " { ... }"
             report.warning(s"Discouraged placement notation. Expected notation: `on$peer$construct$block`", pos)
+
+          if local && !placementInfo.modality.local then
+            errorAndCancel("Placed expression is local but placement type is not.", Position(stat.pos.sourceFile, start, end))
+          if sbj && !placementInfo.modality.subjective then
+            errorAndCancel("Placed expression is subjective but placement type is not.", Position(stat.pos.sourceFile, start, end))
   end checkPlacementNotation
+
+  private object placementTypesEraser extends PlacementFromPlacedValueTypeEraser
+
+  private def checkPlacedBodies(stat: Statement, expr: Term, placementInfo: PlacementInfo, module: ClassDef): Unit =
+    def last(term: Term): Term = term match
+      case Block(_, expr) => last(expr)
+      case Inlined(_, _, body) => last(body)
+      case _ => term
+
+    val tpes = placementInfo.modality match
+      case Modality.Subjective(peerType) =>
+        List(
+          symbols.function1.typeRef.appliedTo(List(symbols.remote.typeRef.appliedTo(peerType), placementInfo.valueType)),
+          symbols.subjective.typeRef.appliedTo(List(peerType, placementInfo.valueType)))
+      case _ =>
+        List(placementInfo.valueType)
+    val unit = tpes.head =:= TypeRepr.of[Unit]
+    val peer = placementInfo.peerType.typeSymbol
+    val bodies = extractPlacementBodies(expr)
+
+    if !unit then
+      bodies foreach: (expr, _) =>
+        val exprType = placementTypesEraser.transform(expr.tpe)
+        if tpes forall { tpe => !(exprType <:< tpe) } then
+          val term = last(expr)
+          tryReportTypeMismatch(term, tpes.head)
+          errorAndCancel(
+            s"Found:    ${exprType.widenTermRefByName.safeShow(Printer.SafeTypeReprShortCode)}\n" +
+            s"Required: ${tpes.head.widenTermRefByName.safeShow(Printer.SafeTypeReprShortCode)}",
+            term.pos)
+
+    if !canceled then
+      val peers = mutable.Set.empty[Symbol]
+      bodies foreach: (expr, tpe) =>
+        tpe foreach: tpe =>
+          PlacementInfo(tpe) foreach: bodyPlacementInfo =>
+            checkPlacementInfo(stat, expr, bodyPlacementInfo, module)
+            if !canceled then
+              val bodyPeerType = bodyPlacementInfo.peerType
+              val bodyPeer = bodyPeerType.typeSymbol
+              if !(bodyPeerType <:< placementInfo.peerType) then
+                errorAndCancel(s"Peer type ${bodyPeer.name} is not a subtype of placement compound peer type ${peer.name}.", expr.posInUserCode.firstCodeLine)
+              if peers contains bodyPeer then
+                errorAndCancel(s"Peer type ${bodyPeer.name} appears multiple times in placement compound.", expr.posInUserCode.firstCodeLine)
+              peers += bodyPeer
+
+      if !canceled && !unit && !(peers contains placementInfo.peerType.typeSymbol) then
+        errorAndCancel(s"Placement compound does not cover common super peer type ${peer.name}. The common super peer can only be left out if the placed value has type Unit.", stat.posInUserCode.firstCodeLine)
+    end if
+  end checkPlacedBodies
+
+  private def tryReportTypeMismatch(tree: Tree, expected: TypeRepr) =
+    try
+      val quotesImplClass = Class.forName("scala.quoted.runtime.impl.QuotesImpl")
+      val contextClass = Class.forName("dotty.tools.dotc.core.Contexts$Context")
+      val typeClass = Class.forName("dotty.tools.dotc.core.Types$Type")
+      val treeClass = Class.forName("dotty.tools.dotc.ast.Trees$Tree")
+      val errorReportingClass = Class.forName("dotty.tools.dotc.typer.ErrorReporting")
+      val errorsClass = Class.forName("dotty.tools.dotc.typer.ErrorReporting$Errors")
+
+      val ctx = quotesImplClass.getMethod("ctx")
+      val err = errorReportingClass.getMethod("err", contextClass)
+
+      val (typeMismatch, defaultClass) =
+        try
+          val addendaClass = Class.forName("dotty.tools.dotc.typer.ErrorReporting$Addenda")
+          val nothingToAddClass = Class.forName("dotty.tools.dotc.typer.ErrorReporting$NothingToAdd")
+          val typeMismatch = errorsClass.getMethod("typeMismatch", treeClass, typeClass, addendaClass)
+          (typeMismatch, nothingToAddClass)
+        catch
+          case NonFatal(_) =>
+            val searchFailureTypeClass = Class.forName("dotty.tools.dotc.typer.Implicits$SearchFailureType")
+            val noMatchingImplicitsClass = Class.forName("dotty.tools.dotc.typer.Implicits$NoMatchingImplicits$")
+            val typeMismatch = errorsClass.getMethod("typeMismatch", treeClass, typeClass, searchFailureTypeClass)
+            (typeMismatch, noMatchingImplicitsClass)
+
+      val context = ctx.invoke(quotes)
+      val default = defaultClass.getField("MODULE$").get(null)
+
+      typeMismatch.invoke(err.invoke(null, context), tree, expected, default)
+    catch
+      case NonFatal(_) =>
+  end tryReportTypeMismatch
 
   private class SingletonTypeChecker(stat: Statement) extends TypeMap(quotes):
     override def transform(tpe: TypeRepr) = tpe match
@@ -379,14 +492,16 @@ trait PlacedStatements:
         SingletonTypeChecker(stat).transform(tpt.tpe)
         placementType(stat, tpt).fold(cleanSpuriousPlacementSyntax(stat)): placementInfo =>
           val (bindings, expr) = cleanPlacementSyntax(placementInfo, rhs)(stat.symbol)
-          checkPlacementType(stat, bindings, placementInfo, module)
+          checkPlacementBindings(stat, bindings, placementInfo, module)
+          expr foreach { checkPlacedBodies(stat, _, placementInfo, module) }
           ValDef.copy(stat)(name, tpt, expr)
 
       case stat @ DefDef(name, paramss, tpt, rhs) =>
         SingletonTypeChecker(stat).transform(tpt.tpe)
         placementType(stat, tpt).fold(cleanSpuriousPlacementSyntax(stat)): placementInfo =>
           val (bindings, expr) = cleanPlacementSyntax(placementInfo, rhs)(stat.symbol)
-          checkPlacementType(stat, bindings, placementInfo, module)
+          checkPlacementBindings(stat, bindings, placementInfo, module)
+          expr foreach { checkPlacedBodies(stat, _, placementInfo, module) }
           if !placementInfo.modality.local then
             val nonSyntheticParamss =
               if hasSyntheticMultitierContextArgument(stat.symbol) then
@@ -406,13 +521,18 @@ trait PlacedStatements:
           val (bindings, expr) = cleanPlacementSyntax(placementInfo, stat)(module.symbol)
 
           val (placementConstructsBindings, hasNonSyntheticPlacedConstructBindings) = bindingsForPlacementConstructs(bindings)
-          errorForExtraBindings(stat, placementConstructsBindings)
+          checkBindings(stat, placementConstructsBindings)
 
           if bindings.isEmpty || hasNonSyntheticPlacedConstructBindings then
             errorAndCancel(s"Placed statements must be enclosed in a placed block: on[${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)}]", stat.posInUserCode.firstCodeLine)
           else if bindings.sizeIs > 1 then
             val compound = extractPlacementBodies(expr) match
-              case (_, peer1) :: (_, peer2) :: _ => s": (on[${peer1.name}] <...>) and (on[${peer2.name}] <...>)"
+              case (_, tpe1) :: (_, tpe2) :: _ =>
+                tpe1.fold(""): tpe1 =>
+                  tpe2.fold(""): tpe2 =>
+                    PlacementInfo(tpe1).fold(""): placementInfo1 =>
+                      PlacementInfo(tpe2).fold(""): placementInfo2 =>
+                        s": (on[${placementInfo1.peerType.typeSymbol.name}] <...>) and (on[${placementInfo2.peerType.typeSymbol.name}] <...>)"
               case _ => ""
             errorAndCancel(s"Placed statements cannot be compound placed expressions$compound. Consider splitting them into separate statements.", stat.posInUserCode.firstCodeLine)
 
@@ -421,7 +541,7 @@ trait PlacedStatements:
           if placementInfo.modality.local then
             errorAndCancel("Placed statements cannot be local.", stat.posInUserCode.firstCodeLine)
           if !canceled then
-            checkPlacementType(stat, bindings, placementInfo, module)
+            checkPlacementBindings(stat, bindings, placementInfo, module)
 
           expr
 

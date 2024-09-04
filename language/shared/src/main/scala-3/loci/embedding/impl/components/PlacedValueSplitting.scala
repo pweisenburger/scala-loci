@@ -13,8 +13,10 @@ trait PlacedValueSplitting:
   this: Component & Commons & Placements & NonPlacements & Peers & PlacedTransformations & PlacedStatements & PlacedValueSynthesis =>
   import quotes.reflect.*
 
-  private def nullOf(tpe: TypeRepr)(owner: Symbol) =
-    if tpe <:< TypeRepr.of[Nothing] then
+  private def erasedBody(tpe: TypeRepr)(owner: Symbol) =
+    if tpe =:= TypeRepr.of[Unit] then
+      Literal(UnitConstant())
+    else if tpe <:< TypeRepr.of[Nothing] then
       val symbol = newMethod(owner, "nullOf", PolyType(List("T"))(_ => List(TypeBounds.empty), _.param(0)), Flags.Synthetic, Symbol.noSymbol)
       val definition = DefDef(symbol, argss => Some(Literal(NullConstant()).select(symbols.asInstanceOf).appliedToTypeTrees(List(TypeIdent(argss.head.head.symbol)))))
       Block(List(definition), Ref(symbol).appliedToType(tpe))
@@ -27,7 +29,12 @@ trait PlacedValueSplitting:
 
     def rhssByPeers(rhs: Option[Term]) =
       rhs.fold(Map(peer -> None)): rhs =>
-        (extractPlacementBodies(rhs) map { (body, peer) => peer -> Some(body) }).toMap
+        val rhssByPeers =
+          extractPlacementBodies(rhs) flatMap: (body, tpe) =>
+            tpe.fold(Some(defn.AnyClass -> Some(body))): tpe =>
+              PlacementInfo(tpe) map: placementInfo =>
+                placementInfo.peerType.typeSymbol -> Some(body)
+        rhssByPeers.toMap
 
     stat match
       case PlacedStatement(ValDef(_, _, rhs))  => rhssByPeers(rhs)
@@ -43,9 +50,19 @@ trait PlacedValueSplitting:
     val rhs = synthesizedPlacedValues(impl.owner) flatMap: placedValues =>
       rhss.get(placedValues.peer)
 
-    val synthesizedBody =
-      rhs.fold(Some(nullOf(impl.info.resultType.substituteParamRefsByTermRefs(impl))(impl))):
-        _ map { _.changeOwner(impl) }
+    val tpe = impl.info.resultType.substituteParamRefsByTermRefs(impl)
+
+    val synthesizedBody = rhs.fold(Some(erasedBody(tpe)(impl))):
+      _ map: rhs =>
+        val body =
+          if tpe =:= TypeRepr.of[Unit] && !(rhs.tpe =:= TypeRepr.of[Unit]) then
+            rhs match
+              case Lambda(_, _) => Block(List(rhs), Literal(UnitConstant()))
+              case Block(statements, expr) => Block.copy(rhs)(statements :+ expr, Literal(UnitConstant()))
+              case _ => Block(List(rhs), Literal(UnitConstant()))
+          else
+            rhs
+        body.changeOwner(impl)
 
     if impl.isMethod then
       def body(paramss: List[List[Tree]]) = synthesizedBody map:
@@ -136,7 +153,7 @@ trait PlacedValueSplitting:
 
     def eraseBody(stat: Definition, term: Term) =
       transformBody(term, stat.symbol): (expr, owners) =>
-        nullOf(owners.foldLeft(expr.tpe) { _.substituteParamRefsByTermRefs(_) })(owners.head)
+        erasedBody(owners.foldLeft(expr.tpe) { _.substituteParamRefsByTermRefs(_) })(owners.head)
 
     val body = module.body flatMap:
       case stat @ ValDef(name, tpt, rhs) if !stat.symbol.isModuleDef =>
