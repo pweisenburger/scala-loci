@@ -183,11 +183,16 @@ trait Invocation:
               s"is not a subtype of the peer ${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)} of the placed value",
               if call then term.posInUserCode.firstCodeLine else term.posInUserCode.lastCodeLine)
 
+        if placementInfo.modality.local then
+          errorAndCancel(
+            "Local placed value cannot be accessed remotely.",
+            term.posInUserCode.firstCodeLine)
+
         placementInfo.modality.subjectivePeerType foreach: subjective =>
           if !(localPeerType <:< subjective) then
             errorAndCancel(
               s"Remote value that is subjectively dispatched to ${subjective.safeShow(Printer.SafeTypeReprShortCode)} peer " +
-              s"is accessed on ${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)} peer.",
+              s"cannot be accessed on ${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)} peer.",
               term.posInUserCode.firstCodeLine)
 
         retrieval foreach: (local, remote, name) =>
@@ -207,6 +212,7 @@ trait Invocation:
               term.posInUserCode.lastCodeLine)
 
           reference.symbol.info match
+            case ByNameType(_) =>
             case MethodType(_, _, _) =>
               if !call then
                 val invocation = "remote call <method>"
@@ -214,7 +220,6 @@ trait Invocation:
                 errorAndCancel(
                   s"Remote access to placed method has to be invoked using $access.",
                   reference.posInUserCode.firstCodeLine)
-            case ByNameType(_) =>
             case _ =>
               if call then
                 report.info(

@@ -220,7 +220,7 @@ trait PlacedExpressions:
         super.transformTerm(term)(owner)
 
       // keep placement types in the intended language constructs that expect them as type parameters
-      case TypeApply(fun, args) if PlacementConstruct(term.symbol) == PlacementConstruct.Construction =>
+      case TypeApply(fun, args) if PlacementConstruct(term.symbol) isOneOf (PlacementConstruct.Transmission, PlacementConstruct.Construction) =>
         TypeApply.copy(term)(transformTerm(fun)(owner), args)
 
       // keep direct placed values accesses through the intended language constructs that expect placed values
