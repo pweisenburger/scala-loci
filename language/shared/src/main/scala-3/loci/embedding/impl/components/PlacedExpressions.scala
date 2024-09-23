@@ -180,7 +180,7 @@ trait PlacedExpressions:
         substitute(stat.symbol, symbol)
         if stat.symbol.owner.isClassDef then replace(stat.symbol, symbol)
         DefDef(symbol, paramss =>
-          (stat.paramss flatMap { _.params map { _.symbol } }) zip (paramss.flatten map { _.symbol }) foreach { substitute(_, _) }
+          (stat.paramss flatMap { _.params map { _.symbol } }) lazyZip (paramss.flatten map { _.symbol }) foreach { substitute(_, _) }
           stat.rhs map { rhs => transformTerm(rhs.changeOwner(symbol))(symbol) })
   end AdapatingDefinitionTypeCopier
 
@@ -235,7 +235,7 @@ trait PlacedExpressions:
 
         val args = clearTypeApplications(term.fun).tpe match
           case MethodType(_, paramTypes, _) =>
-            paramTypes zip term.args map: (tpe, arg) =>
+            paramTypes lazyZip term.args map: (tpe, arg) =>
               if !(tpe =:= TypeRepr.of[Nothing]) && tpe <:< types.placedValue then
                 val Narrowing(expr) = arg
                 val skipNestedApplies =

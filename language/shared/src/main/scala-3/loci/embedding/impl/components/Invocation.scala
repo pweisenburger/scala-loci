@@ -226,7 +226,7 @@ trait Invocation:
             case MethodType(_, types, _) =>
               val (term, initialArgs) = calledArguments(fun)
               val followingArgs =
-                types zip args collect:
+                types lazyZip args collect:
                   case (tpe, arg) if meaningfulArgumentType(tpe) => arg
               (term, initialArgs ++ followingArgs)
             case _ =>
@@ -324,7 +324,7 @@ trait Invocation:
         val fun = transformTerm(term.fun)(owner)
         val args = clearTypeApplications(term.fun).tpe match
           case MethodType(_, paramTypes, _) =>
-            paramTypes zip term.args map: (tpe, arg) =>
+            paramTypes lazyZip term.args map: (tpe, arg) =>
               if !(tpe =:= TypeRepr.of[Nothing]) && tpe <:< types.placedValue then
                 super.transformTerm(arg)(owner)
               else

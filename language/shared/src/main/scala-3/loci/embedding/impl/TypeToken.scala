@@ -455,7 +455,7 @@ object TypeToken:
           serializedType flatMap { tpe => paramTypes map { tpe :: _ } }
 
         val params = paramTypes flatMap: paramTypes =>
-          (tpe.paramNames zip paramTypes).foldRight(Option(List.empty[TypeToken])):
+          (tpe.paramNames lazyZip paramTypes).foldRight(Option(List.empty[TypeToken])):
             case ((name, tpe), params) => params map: params =>
               val param = escape(name) :: paramSeparator ++ tpe
               if params.isEmpty then param else param ++ (`,` ++ params)

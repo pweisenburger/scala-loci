@@ -66,7 +66,7 @@ trait PlacedValueSplitting:
 
     if impl.isMethod then
       def body(paramss: List[List[Tree]]) = synthesizedBody map:
-        _.substituteRefs((stat.symbol.paramSymss.flatten zip (paramss flatMap { _ map { _.symbol } })).toMap, impl)
+        _.substituteRefs((stat.symbol.paramSymss.flatten lazyZip (paramss flatMap { _ map { _.symbol } })).toMap, impl)
       DefDef(impl, body)
     else
       ValDef(impl, synthesizedBody)

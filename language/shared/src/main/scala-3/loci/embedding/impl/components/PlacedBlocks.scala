@@ -231,7 +231,7 @@ trait PlacedBlocks:
 
           val definition = DefDef(
             symbol,
-            params => Some(subsitituteVariables(rhs, owner, (captured.keys zip (params.head map { _.symbol })).toMap)))
+            params => Some(subsitituteVariables(rhs, owner, (captured.keys lazyZip (params.head map { _.symbol })).toMap)))
 
           blockMethods.insert(index, definition)
 
