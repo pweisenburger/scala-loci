@@ -336,17 +336,11 @@ trait PlacedValueSynthesis:
           else
             List.empty
 
-      def declaredParentPlacedValues =
-        PeerInfo(ThisType(module).select(peer)).toList flatMap:
-          _.parents collect:
-            case parent @ TypeRef(qualifier, _) if PeerInfo(parent).isDefined =>
-              qualifier.select(synthesizedPlacedValues(qualifier.typeSymbol, parent.typeSymbol).symbol)
-
       val parents =
         TypeRepr.of[Object] :: (
           if !isMultitierModule(module) then List.empty
-          else if peer == defn.AnyClass then declaredParentPlacedValues ++ inheritedParentPlacedValues :+ types.placedValues
-          else synthesizedPlacedValues(module, defn.AnyClass).symbol.typeRef :: declaredParentPlacedValues ++ inheritedParentPlacedValues)
+          else if peer == defn.AnyClass then inheritedParentPlacedValues :+ types.placedValues
+          else synthesizedPlacedValues(module, defn.AnyClass).symbol.typeRef :: inheritedParentPlacedValues)
 
       if peer == defn.AnyClass then
         SymbolMutator.getOrErrorAndAbort.invalidateMemberCaches(module)

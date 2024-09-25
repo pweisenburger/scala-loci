@@ -78,7 +78,11 @@ trait PlacedExpressions:
         val owner = symbol.maybeOwner
         if owner == symbols.select || owner == symbols.run ||
            owner == symbols.capture || owner == symbols.block ||
-           owner == symbols.narrow || owner == symbols.call then
+           owner == symbols.narrow || owner == symbols.call ||
+           (symbols.transmission.info.baseClasses contains owner) ||
+           (symbols.subjectivity.info.baseClasses contains owner) ||
+           (symbols.multiplicity.info.baseClasses contains owner) ||
+           (symbols.tie.info.baseClasses contains owner) then
           Construction
         else if owner == symbols.placed && symbol.name != names.to then
           Selection

@@ -70,7 +70,10 @@ trait Commons:
     val multiple = TypeRepr.of[language.Multiple[?]].typeSymbol
     val context = TypeRepr.of[Placement.Context.type].typeSymbol
     val multitierContext = TypeRepr.of[embedding.Multitier.Context.type].typeSymbol
-    val lowestCommonSuperType = TypeRepr.of[LowestCommonSuperType].typeSymbol
+    val subjectivity = TypeRepr.of[Subjectivity.type].typeSymbol
+    val multiplicity = TypeRepr.of[Multiplicity.type].typeSymbol
+    val tie = TypeRepr.of[Tie.type].typeSymbol
+    val lowestCommonSuperType = TypeRepr.of[LowestCommonSuperType[?, ?, ?]].typeSymbol
     val delegates = TypeRepr.of[transmitter.Transmittables.Delegates[?]].typeSymbol
     val message = TypeRepr.of[transmitter.Transmittables.Message[?]].typeSymbol
     val none = TypeRepr.of[transmitter.Transmittables.None].typeSymbol
