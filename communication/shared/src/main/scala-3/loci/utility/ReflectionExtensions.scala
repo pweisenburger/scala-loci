@@ -120,7 +120,7 @@ object reflectionExtensions:
     @targetName("safeShowTree") def safeShow(printer: quotes.reflect.Printer[quotes.reflect.Tree]): String = tree.safeShow("<?>", printer)
     @targetName("safeShowTree") def safeShow(fallback: String, printer: quotes.reflect.Printer[quotes.reflect.Tree]): String =
       try
-        val result = tree.show(using printer).trim
+        val result = tree.show(using printer).strip
         if result.nonEmpty then result else fallback
       catch
         case NonFatal(_) => fallback
@@ -204,7 +204,7 @@ object reflectionExtensions:
     @targetName("safeShowType") def safeShow(printer: quotes.reflect.Printer[quotes.reflect.TypeRepr]): String = tpe.safeShow("<?>", printer)
     @targetName("safeShowType") def safeShow(fallback: String, printer: quotes.reflect.Printer[quotes.reflect.TypeRepr]): String =
       try
-        val result = tpe.show(using printer).trim
+        val result = tpe.show(using printer).strip
         if result.nonEmpty then result else fallback
       catch
         case NonFatal(_) => fallback
