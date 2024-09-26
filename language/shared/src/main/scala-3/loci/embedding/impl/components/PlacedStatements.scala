@@ -275,7 +275,7 @@ trait PlacedStatements:
 
     val (pos, inferred) = statementTypeTreeInfo(stat)
 
-    if inferred && (bindings.isEmpty || hasNonSyntheticPlacedConstructBindings) then
+    if inferred && ((placementConstructsBindings forall { _.isEmpty }) || hasNonSyntheticPlacedConstructBindings) then
       errorAndCancel(s"Placed definitions without type ascription must be enclosed in a placed block: on[${placementInfo.peerType.prettyShowFrom(module.symbol)}]", pos)
     else if isPlacementCompound && hasNonSyntheticPlacedConstructBindings then
       errorAndCancel("Illegal use of multitier construct.", stat.posInUserCode.firstCodeLine)

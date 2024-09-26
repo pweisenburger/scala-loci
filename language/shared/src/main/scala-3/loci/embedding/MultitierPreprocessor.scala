@@ -76,6 +76,7 @@ object MultitierPreprocessor:
         val positionedClass = Class.forName("dotty.tools.dotc.ast.Positioned")
         val treeClass = Class.forName("dotty.tools.dotc.ast.Trees$Tree")
         val namesClass = Class.forName("dotty.tools.dotc.core.Names")
+        val nameClass = Class.forName("dotty.tools.dotc.core.Names$Name")
         val termNameClass = Class.forName("dotty.tools.dotc.core.Names$TermName")
         val applyKindClass = Class.forName("dotty.tools.dotc.ast.Trees$ApplyKind")
         val applyClass = Class.forName("dotty.tools.dotc.ast.Trees$Apply")
@@ -123,6 +124,7 @@ object MultitierPreprocessor:
         val setApplyKind = applyClass.getMethod("setApplyKind", applyKindClass)
         val typeApply = typeApplyClass.getMethod("apply", treeClass, classOf[List[?]], sourceFileClass)
         val nameSpan = selectClass.getMethod("nameSpan", contextClass)
+        val ident = identClass.getMethod("apply", nameClass, sourceFileClass)
         val rawMods = defTreeClass.getMethod("rawMods")
         val setMods = defTreeClass.getMethod("setMods", modifiersClass)
         val typeTree = typeTreeClass.getMethod("apply", sourceFileClass)
@@ -517,11 +519,22 @@ object MultitierPreprocessor:
                         false
 
                     if (insertNonplacedReturnTypeForValuesWithoutParams || hasPlacementType) && !rhsMutatedToPlacedConstruct then
-                      val contextSymbol = Symbol.newVal(Symbol.spliceOwner, "<synthetic context>", `Placed.Context`.typeRef, Flags.Synthetic, Symbol.noSymbol)
-                      val contextTree = Block(List(ValDef(contextSymbol, Some(Ref(erased).appliedToType(TypeRepr.of[Nothing])))), Ref(contextSymbol))
+                      val contextName = termName.invoke(null, "<synthetic context>")
+                      val contextTypeTree = TypedSplice(TypeIdent(`Placed.Context`))
+                      val contextRhs = TypedSplice(Ref(erased).appliedToType(TypeRepr.of[Nothing]))
+
+                      val contextDef =
+                        withSpan.invoke(
+                          withFlags.invoke(
+                            valDef.invoke(null, contextName, contextTypeTree, contextRhs, Position.ofMacroExpansion.sourceFile),
+                            Flags.Synthetic),
+                          positionSpan)
+
+                      val contextRef = ident.invoke(null, contextName, Position.ofMacroExpansion.sourceFile)
+                      val contextTree = block.invoke(null, List(contextDef), contextRef, Position.ofMacroExpansion.sourceFile)
 
                       val placedContext = setApplyKind.invoke(
-                        apply.invoke(null, TypedSplice(Ref(placed)), List(TypedSplice(contextTree)), Position.ofMacroExpansion.sourceFile),
+                        apply.invoke(null, TypedSplice(Ref(placed)), List(contextTree), Position.ofMacroExpansion.sourceFile),
                         applyKindUsing)
 
                       val paramName = termName.invoke(null, "<synthetic context>")
@@ -533,7 +546,6 @@ object MultitierPreprocessor:
                             valDef.invoke(null, paramName, paramTypeTree, emptyTree, Position.ofMacroExpansion.sourceFile),
                             Flags.Synthetic | Flags.Param | Flags.Given),
                           positionSpan)
-
 
                       val contextFunction = function.invoke(null, List(paramDef), adaptedRhs, Position.ofMacroExpansion.sourceFile)
 

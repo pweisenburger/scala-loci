@@ -122,11 +122,11 @@ def inferrableCanonicalPlacementTypeContextClosure[R: Type](using Quotes)(v: Exp
 
   val (result, syntheticWithoutNestedPlacementExpression) = v.toList map { _.asTerm } match
     case List(PlacementContext(evidence, NestedPlacementExpression(PlacementCompoundTypesPropagationMarker(expr, _)))) =>
-      val term = Inlined(None, List.empty, Block(List(evidence), Inlined(None, List.empty, expr)))
-      (clearContextVariables(term)(Symbol.spliceOwner), None)
+      val term = Inlined(None, List.empty, Block(List(evidence), Inlined(None, List.empty, clearContextVariables(expr)(Symbol.spliceOwner))))
+      (term, None)
 
     case List(PlacementContext(evidence, PlacementCompoundTypesPropagationMarker(expr, marked))) =>
-      val term = Inlined(None, List.empty, Block(List(evidence), Inlined(None, List.empty, expr)))
+      val term = Inlined(None, List.empty, Block(List(evidence), Inlined(None, List.empty, clearContextVariables(expr)(Symbol.spliceOwner))))
       val tpe = canonical(clean(TypeRepr.of[R], ensureLocalType = false), placedMarkerOnly = !marked && followedByPlacementCompoundConstruct)
       (Block(List(term), Ref(symbols.erased).appliedToType(tpe)), Option.when(evidence.name == "<synthetic context>") { term })
 
@@ -158,7 +158,7 @@ def inferrableCanonicalPlacementTypeContextClosure[R: Type](using Quotes)(v: Exp
 
       val (ensureLocalType, marked, closures) = nested
       val tpe = canonical(clean(TypeRepr.of[R], ensureLocalType), placedMarkerOnly = !marked && followedByPlacementCompoundConstruct)
-      (Block(closures, Ref(symbols.erased).appliedToType(tpe)), None)
+      (Block(closures map { clearContextVariables(_)(Symbol.spliceOwner) }, Ref(symbols.erased).appliedToType(tpe)), None)
   end val
 
   val r = result.tpe
