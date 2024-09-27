@@ -213,14 +213,14 @@ trait PlacedStatements:
         case Inferred() => stat.posInUserCode.firstCodeLine
         case _ => tpt.posInUserCode
       if placementInfo.valueType.isContextFunctionType then
-        errorAndCancel(s"Placed type cannot be a context function type: ${placementInfo.valueType.safeShow}", pos)
+        errorAndCancel(s"Placed type cannot be a context function type: ${placementInfo.valueType.prettyShow}", pos)
       else if !placementInfo.canonical then
         val message = tpt match
           case Inferred() => "Placement type could not be inferred. Explicit type ascription required."
           case _ => "Invalid placement type."
         errorAndCancel(
-          s"$message Expected type: ${placementInfo.showCanonical}" +
-          s"${System.lineSeparator}Placement types are imported by: import loci.language.*", pos)
+          s"$message Expected type: ${placementInfo.showCanonicalFrom(stat.symbol.owner)}\n" +
+          s"Placement types are imported by: import loci.language.*", pos)
       placementInfo.canonical
 
   private def statementTypeTreeInfo(stat: Statement) = stat match
@@ -246,12 +246,13 @@ trait PlacedStatements:
   private def checkPeerType(stat: Statement, peerType: TypeRepr, module: ClassDef, statement: String, relation: String): Unit =
     if PeerInfo(peerType).isEmpty then
       errorAndCancel(
-        s"$statement must be $relation a peer type but is $relation ${peerType.safeShow}",
+        s"$statement must be $relation a peer type but is $relation ${peerType.prettyShowFrom(module.symbol)}",
         stat.posInUserCode.firstCodeLine)
     if peerType.typeSymbol != defn.AnyClass && !(peerType =:= ThisType(module.symbol).select(peerType.typeSymbol)) then
+      val symbol = module.symbol
+      val name = if symbol.isClassDef && symbol.isModuleDef then symbol.companionModule.name else symbol.name
       errorAndCancel(
-        s"$statement must be $relation a peer of module ${module.symbol.name} " +
-        s"but is $relation peer ${peerType.safeShow}",
+        s"$statement must be $relation a peer of module $name but is $relation peer ${peerType.prettyShowFrom(module.symbol)}",
         stat.posInUserCode.firstCodeLine)
 
   private def checkPlacementInfo(definition: Statement, stat: Statement, placementInfo: PlacementInfo, module: ClassDef): Unit =
@@ -275,7 +276,7 @@ trait PlacedStatements:
     val (pos, inferred) = statementTypeTreeInfo(stat)
 
     if inferred && (bindings.isEmpty || hasNonSyntheticPlacedConstructBindings) then
-      errorAndCancel(s"Placed definitions without type ascription must be enclosed in a placed block: on[${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)}]", pos)
+      errorAndCancel(s"Placed definitions without type ascription must be enclosed in a placed block: on[${placementInfo.peerType.prettyShowFrom(module.symbol)}]", pos)
     else if isPlacementCompound && hasNonSyntheticPlacedConstructBindings then
       errorAndCancel("Illegal use of multitier construct.", stat.posInUserCode.firstCodeLine)
 
@@ -418,8 +419,8 @@ trait PlacedStatements:
           val term = last(expr)
           tryReportTypeMismatch(term, tpes.head)
           errorAndCancel(
-            s"Found:    ${exprType.widenTermRefByName.safeShow(Printer.SafeTypeReprShortCode)}\n" +
-            s"Required: ${tpes.head.widenTermRefByName.safeShow(Printer.SafeTypeReprShortCode)}",
+            s"Found:    ${exprType.widenTermRefByName.prettyShow}\n" +
+            s"Required: ${tpes.head.widenTermRefByName.prettyShow}",
             term.pos)
 
     if !canceled then
@@ -524,7 +525,7 @@ trait PlacedStatements:
           checkBindings(stat, placementConstructsBindings)
 
           if bindings.isEmpty || hasNonSyntheticPlacedConstructBindings then
-            errorAndCancel(s"Placed statements must be enclosed in a placed block: on[${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)}]", stat.posInUserCode.firstCodeLine)
+            errorAndCancel(s"Placed statements must be enclosed in a placed block: on[${placementInfo.peerType.prettyShowFrom(module.symbol)}]", stat.posInUserCode.firstCodeLine)
           else if bindings.sizeIs > 1 then
             val compound = extractPlacementBodies(expr) match
               case (_, tpe1) :: (_, tpe2) :: _ =>

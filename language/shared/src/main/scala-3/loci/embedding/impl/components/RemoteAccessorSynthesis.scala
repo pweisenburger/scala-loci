@@ -99,7 +99,7 @@ trait RemoteAccessorSynthesis:
     def showMore = s"$show { type Proxy = ${showType(proxy)} }"
     private def showType(tpe: TypeRepr) = tpe match
       case TypeBounds(low, hi) if low.typeSymbol == defn.NothingClass && hi.typeSymbol == defn.AnyClass => "?"
-      case _ => tpe.safeShow(Printer.SafeTypeReprShortCode)
+      case _ => tpe.prettyShow
 
   private object TransmittableTypes:
     def apply(transmittable: TypeRepr): TransmittableTypes =
@@ -297,12 +297,12 @@ trait RemoteAccessorSynthesis:
     def resolveSerializable(tpe: TypeRepr) =
       resolve(
         symbols.serializable.typeRef.appliedTo(tpe),
-        s"${tpe.safeShow(Printer.SafeTypeReprShortCode)} is not serializable.").asTerm
+        s"${tpe.prettyShow} is not serializable.").asTerm
 
     def resolveTransmittable(tpe: TypeRepr, allowFailureForTypeParameters: Boolean) =
       resolve(
         symbols.transmittable.typeRef.appliedTo(List(tpe, TypeBounds.empty, TypeBounds.empty, TypeBounds.empty, TypeBounds.empty)),
-        s"${tpe.safeShow(Printer.SafeTypeReprShortCode)} is not transmittable.").asTransmittable(allowFailureForTypeParameters)
+        s"${tpe.prettyShow} is not transmittable.").asTransmittable(allowFailureForTypeParameters)
   end Resolution
 
   private def signatures(module: Symbol) =
@@ -328,7 +328,7 @@ trait RemoteAccessorSynthesis:
           val(symbol, _) = synthesizePeerSignature(peerType.typeSymbol.owner, peerType.typeSymbol)
           Some(term.select(symbol))
         case _ =>
-          errorAndCancel(s"Invalid prefix for peer type: ${peerType.safeShow(Printer.SafeTypeReprCode)}", pos)
+          errorAndCancel(s"Invalid prefix for peer type: ${peerType.prettyShow}", pos)
           None
 
     val moduleIdentifier =
@@ -498,7 +498,7 @@ trait RemoteAccessorSynthesis:
             if params.isEmpty || params.head.isTerm then s"(${args.mkString(", ")})" else s"[${args.mkString(", ")}]"
         val result =
           val tpe = symbol.info.resultType
-          PlacementInfo(tpe).fold(tpe.safeShow(Printer.SafeTypeReprShortCode)) { _.showCanonical }
+          PlacementInfo(tpe).fold(tpe.prettyShowFrom(module)) { _.showCanonicalFrom(module) }
         s"${args.mkString}: $result"
 
       val name = symbolForName match
@@ -661,7 +661,7 @@ trait RemoteAccessorSynthesis:
     val transmittableTypeMap = MutableCachedTypeSeqMap[Transmittable]
 
     def incoherenceMessage(tpe: TypeRepr) =
-      s"Incoherent transmittables for type ${tpe.safeShow(Printer.SafeTypeReprShortCode)}"
+      s"Incoherent transmittables for type ${tpe.prettyShow}"
 
     object localVariablesCollector extends TreeAccumulator[(Set[Symbol], Boolean)]:
       def foldTree(variables: (Set[Symbol], Boolean), tree: Tree)(owner: Symbol) =
@@ -697,7 +697,7 @@ trait RemoteAccessorSynthesis:
             case _ =>
               transmittableTypeMap.addNewTypeEntry(transmittable.types.base, transmittable)
         else
-          errorAndCancel(s"Illegal transmittable for type ${transmittable.types.base.safeShow(Printer.SafeTypeReprShortCode)} referring to local variable.", pos)
+          errorAndCancel(s"Illegal transmittable for type ${transmittable.types.base.prettyShow} referring to local variable.", pos)
 
     val inheritedPlacedAccessors =
       synthesizeAllPlacedAccessors(module, includeFirst = false)
@@ -809,7 +809,7 @@ trait RemoteAccessorSynthesis:
           else if types.transmittables derivesFrom symbols.none then
             Right(Ref(symbols.noneContext))
           else
-            Left(s"${types.base.safeShow(Printer.SafeTypeReprShortCode)} is not transmittable")
+            Left(s"${types.base.prettyShow} is not transmittable")
 
         contextBuilder(transmittable.types) flatMap: builder =>
           resolveSerializable(transmittable.types.intermediate) map: serializer =>
@@ -894,7 +894,7 @@ trait RemoteAccessorSynthesis:
         if conformsToMarshallable(transmittable.types.asMarshallableTypes) then
           body
         else
-          val message = s"${transmittable.types.base.safeShow(Printer.SafeTypeReprShortCode)} is not transmittable"
+          val message = s"${transmittable.types.base.prettyShow} is not transmittable"
           Left:
             if required.maybeProxy.nonEmpty then s"$message. Found ${transmittable.types.showMore}, required ${requiredTypes.showMore}."
             else s"$message. Found ${transmittable.types.show}, required ${requiredTypes.show}."

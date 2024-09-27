@@ -18,10 +18,17 @@ trait Placements:
     case Subjective(peerType: TypeRepr) extends Modality(false, true, scala.Some(peerType))
 
   case class PlacementInfo(tpe: TypeRepr, canonical: Boolean, canonicalType: TypeRepr, valueType: TypeRepr, peerType: TypeRepr, modality: Modality):
-    def showCanonical =
-      val `subjective.safeShow` = modality.subjectivePeerType.fold(""): peerType =>
-        s" ${symbols.`language.per`.name} ${peerType.safeShow(Printer.SafeTypeReprShortCode)}"
-      s"${valueType.safeShow(Printer.SafeTypeReprShortCode)}${`subjective.safeShow`} ${symbols.`language.on`.name} ${peerType.safeShow(Printer.SafeTypeReprShortCode)}"
+    def showCanonical = show(None)
+    def showCanonicalFrom(symbol: Symbol) = show(Some(symbol))
+    private def show(symbol: Option[Symbol]) =
+      val prettyPrint = symbol.fold[TypeRepr => String](_.prettyShow) { symbol => _.prettyShowFrom(symbol) }
+      val compilerPrettyPrinter = canonicalType.safeShow(Printer.CompilerStyleTypeReprCode) != canonicalType.safeShow(Printer.SafeTypeReprCode)
+      if !compilerPrettyPrinter then
+        val prettyPrintSubjective = modality.subjectivePeerType.fold(""): peerType =>
+          s" ${symbols.`language.per`.name} ${prettyPrint(peerType)}"
+        s"${prettyPrint(valueType)}$prettyPrintSubjective ${symbols.`language.on`.name} ${prettyPrint(peerType)}"
+      else
+        prettyPrint(canonicalType)
 
   object PlacementInfo:
     def apply(tpe: TypeRepr): Option[PlacementInfo] =

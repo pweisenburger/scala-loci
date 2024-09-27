@@ -37,13 +37,12 @@ trait Peers:
         val position = symbol.safePos getOrElse pos
         if tpe.typeSymbol.hasAnnotation(symbols.peer) then
           tpe.qualifier.memberType(symbol) match
-            case TypeBounds(low: TypeRef, hi) =>
-              if bottomType(low) then
-                parentsAndTies(hi, pos) map { (parents, ties) => PeerInfo(tpe, parents, ties, pos) }
-              else
-                Left(s"Lower type bound not allowed in peer specification: >: ${low.safeShow(Printer.SafeTypeReprShortCode)}", position)
+            case TypeBounds(low: TypeRef, hi) if bottomType(low) =>
+              parentsAndTies(hi, pos) map { (parents, ties) => PeerInfo(tpe, parents, ties, pos) }
+            case TypeBounds(low, _) =>
+              Left(s"Lower type bound not allowed in peer specification: >: ${low.prettyShow}", position)
             case tpe =>
-              Left(s"Unexpected type in peer specification: ${tpe.safeShow(Printer.SafeTypeReprShortCode)}", position)
+              Left(s"Unexpected type in peer specification: ${tpe.prettyShow}", position)
         else
           Left(s"No peer type: @peer type ${symbol.name}", position)
       case _ =>
@@ -77,7 +76,7 @@ trait Peers:
           parentsAndTies(right, pos) map: (rightParents, rightTies) =>
             (leftParents ++ rightParents, leftTies ++ rightTies)
       case OrType(_, _) =>
-        Left(s"Union type not allowed in peer specification: ${tpe.safeShow(Printer.SafeTypeReprShortCode)}", pos)
+        Left(s"Union type not allowed in peer specification: ${tpe.prettyShow}", pos)
       case Refinement(parent: TypeRef, names.tie, info) => info match
         case TypeBounds(low: TypeRef, hi) =>
           if bottomType(low) then
@@ -85,11 +84,11 @@ trait Peers:
               parentsAndTies(parent, pos) map: (parentParents, parentTies) =>
                 (parentParents, parentTies ++ ties)
           else
-            Left(s"Lower type bound not allowed for peer tie specification: >: ${low.safeShow(Printer.SafeTypeReprShortCode)}", pos)
+            Left(s"Lower type bound not allowed for peer tie specification: >: ${low.prettyShow}", pos)
         case _ =>
-          Left(s"Unexpected type in peer tie specification: ${info.safeShow(Printer.SafeTypeReprShortCode)}", pos)
+          Left(s"Unexpected type in peer tie specification: ${info.prettyShow}", pos)
       case _ =>
-        Left(s"Unexpected type in peer specification: ${tpe.safeShow(Printer.SafeTypeReprShortCode)}", pos)
+        Left(s"Unexpected type in peer specification: ${tpe.prettyShow}", pos)
 
     private def ties(tpe: TypeRepr, pos: Position): Either[(String, Position), List[(TypeRepr, Multiplicity)]] = tpe match
       case tpe: TypeRef if topType(tpe) =>
@@ -97,7 +96,7 @@ trait Peers:
       case AndType(left, right) =>
         ties(left, pos) flatMap { left => ties(right, pos) map { left ++ _ } }
       case OrType(_, _) =>
-        Left(s"Union type not allowed in peer tie specification: ${tpe.safeShow(Printer.SafeTypeReprShortCode)}", pos)
+        Left(s"Union type not allowed in peer tie specification: ${tpe.prettyShow}", pos)
       case AppliedType(tycon, List(arg)) =>
         val symbol = tycon.typeSymbol
         val multiplicity =
@@ -110,7 +109,7 @@ trait Peers:
             pos)
         multiplicity map { multiplicity => List(arg.stripLazyRef -> multiplicity) }
       case _ =>
-        Left(s"Unexpected type in peer tie specification: ${tpe.safeShow(Printer.SafeTypeReprShortCode)}", pos)
+        Left(s"Unexpected type in peer tie specification: ${tpe.prettyShow}", pos)
 
     private def topType(tpe: TypeRef) =
       val symbol = tpe.typeSymbol

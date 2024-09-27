@@ -168,6 +168,7 @@ trait Invocation:
   end SelectionMode
 
   private def destructPlacedValueAccess(
+      module: Symbol,
       term: Term,
       value: Term,
       localPeerType: TypeRepr,
@@ -179,8 +180,8 @@ trait Invocation:
         selectionMode.maybeType foreach: remotePeerType =>
           if !(remotePeerType <:< placementInfo.peerType) then
             errorAndCancel(
-              s"Selected remote peer ${remotePeerType.safeShow(Printer.SafeTypeReprShortCode)} " +
-              s"is not a subtype of the peer ${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)} of the placed value",
+              s"Selected remote peer ${remotePeerType.prettyShowFrom(module)} " +
+              s"is not a subtype of the peer ${placementInfo.peerType.prettyShowFrom(module)} of the placed value",
               if call then term.posInUserCode.firstCodeLine else term.posInUserCode.lastCodeLine)
 
         if placementInfo.modality.local then
@@ -191,15 +192,15 @@ trait Invocation:
         placementInfo.modality.subjectivePeerType foreach: subjective =>
           if !(localPeerType <:< subjective) then
             errorAndCancel(
-              s"Remote value that is subjectively dispatched to ${subjective.safeShow(Printer.SafeTypeReprShortCode)} peer " +
-              s"cannot be accessed on ${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)} peer.",
+              s"Remote value that is subjectively dispatched to ${subjective.prettyShowFrom(module)} peer " +
+              s"cannot be accessed on ${placementInfo.peerType.prettyShowFrom(module)} peer.",
               term.posInUserCode.firstCodeLine)
 
         retrieval foreach: (local, remote, name) =>
           if !(local =:= localPeerType) then
             errorAndCancel(
-              s"Remote access resolved the local peer as ${local.safeShow(Printer.SafeTypeReprShortCode)} " +
-              s"but the local peer is ${localPeerType.safeShow(Printer.SafeTypeReprShortCode)}.",
+              s"Remote access resolved the local peer as ${local.prettyShowFrom(module)} " +
+              s"but the local peer is ${localPeerType.prettyShowFrom(module)}.",
               term.posInUserCode.lastCodeLine)
 
           val (remotePeerName, remotePeerType) =
@@ -207,8 +208,8 @@ trait Invocation:
 
           if !(remote =:= remotePeerType) then
             errorAndCancel(
-              s"Remote access resolved the remote peer as ${remote.safeShow(Printer.SafeTypeReprShortCode)} " +
-              s"but the $remotePeerName is ${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)}.",
+              s"Remote access resolved the remote peer as ${remote.prettyShowFrom(module)} " +
+              s"but the $remotePeerName is ${placementInfo.peerType.prettyShowFrom(module)}.",
               term.posInUserCode.lastCodeLine)
 
           reference.symbol.info match
@@ -252,6 +253,7 @@ trait Invocation:
   end destructPlacedValueAccess
 
   private def checkTieMultiplicities(
+      module: Symbol,
       term: Term,
       local: TypeRepr,
       remote: TypeRepr,
@@ -293,10 +295,10 @@ trait Invocation:
             tieMismatchMessage foreach: message =>
               val prefix =
                 if selectionMode.instanceBased then
-                  s"Remote access resolved the selection of ${remote.safeShow(Printer.SafeTypeReprShortCode)} peers to be"
+                  s"Remote access resolved the selection of ${remote.prettyShowFrom(module)} peers to be"
                 else
-                  s"Remote access resolved the tie from ${local.safeShow(Printer.SafeTypeReprShortCode)} peer " +
-                  s"to ${remote.safeShow(Printer.SafeTypeReprShortCode)} peer as"
+                  s"Remote access resolved the tie from ${local.prettyShowFrom(module)} peer " +
+                  s"to ${remote.prettyShowFrom(module)} peer as"
               errorAndCancel(
                 s"$prefix ${multiplicityName(tie)} but $message.",
                 if call then term.posInUserCode.firstCodeLine else term.posInUserCode.lastCodeLine)
@@ -304,8 +306,8 @@ trait Invocation:
           case _ =>
             if multiplicity.isEmpty then
               errorAndCancel(
-                s"No tie is specified from ${local.safeShow(Printer.SafeTypeReprShortCode)} peer " +
-                s"to ${remote.safeShow(Printer.SafeTypeReprShortCode)} peer.",
+                s"No tie is specified from ${local.prettyShowFrom(module)} peer " +
+                s"to ${remote.prettyShowFrom(module)} peer.",
                 if call then term.posInUserCode.firstCodeLine else term.posInUserCode.lastCodeLine)
   end checkTieMultiplicities
 
@@ -407,11 +409,11 @@ trait Invocation:
                 case _ => (arg, None, false)
 
               val selectionMode = SelectionMode(selection)(owner)
-              val access = destructPlacedValueAccess(term, value, peerType, selectionMode, Some(l, r, name), call)
+              val access = destructPlacedValueAccess(module, term, value, peerType, selectionMode, Some(l, r, name), call)
 
               val result =
                 access flatMap: (_, reference, arguments) =>
-                  checkTieMultiplicities(term, l, r, selectionMode, Some(m), call)
+                  checkTieMultiplicities(module, term, l, r, selectionMode, Some(m), call)
 
                   remoteAccessArguments(r, reference, arguments) map: (system, placed, signature, arguments) =>
                     val result =
@@ -444,12 +446,12 @@ trait Invocation:
             // remote access to placed values of other peer instances using remote procedure syntax (without accessor syntax)
             case Call(value, selection) =>
               val selectionMode = SelectionMode(selection)(owner)
-              val access = destructPlacedValueAccess(term, value, peerType, selectionMode, retrieval = None, call = true)
+              val access = destructPlacedValueAccess(module, term, value, peerType, selectionMode, retrieval = None, call = true)
 
               val result =
                 access flatMap: (placementInfo, reference, arguments) =>
                   val remotePeerType = selectionMode.maybeType getOrElse placementInfo.peerType
-                  checkTieMultiplicities(term, peerType, remotePeerType, selectionMode, tie = None, call = true)
+                  checkTieMultiplicities(module, term, peerType, remotePeerType, selectionMode, tie = None, call = true)
 
                   remoteAccessArguments(remotePeerType, reference, arguments) map: (system, placed, signature, arguments) =>
                     val result =
@@ -487,14 +489,14 @@ trait Invocation:
                   else
                     val remote = transformedRemote.tpe.baseType(symbols.remote).typeArgs.head
                     if !(remote <:< subjective) then
-                      Some(remote.safeShow(Printer.SafeTypeReprShortCode))
+                      Some(remote.prettyShowFrom(module))
                     else
                       None
 
                 instance match
                   case Some(instance) =>
                     errorAndCancel(
-                      s"Value that is subjectively dispatched to ${subjective.safeShow(Printer.SafeTypeReprShortCode)} peer " +
+                      s"Value that is subjectively dispatched to ${subjective.prettyShowFrom(module)} peer " +
                       s"cannot be invoked for $instance peer instance.",
                       term.posInUserCode.firstCodeLine)
                     term
@@ -517,8 +519,8 @@ trait Invocation:
                     else
                       "value"
                   errorAndCancel(
-                    s"Access to $value on ${placementInfo.peerType.safeShow(Printer.SafeTypeReprShortCode)} peer not allowed " +
-                    s"on ${peerType.safeShow(Printer.SafeTypeReprShortCode)} peer.",
+                    s"Access to $value on ${placementInfo.peerType.prettyShowFrom(module)} peer not allowed " +
+                    s"on ${peerType.prettyShowFrom(module)} peer.",
                     reference.posInUserCode.firstCodeLine)
                   None
                 else

@@ -267,7 +267,7 @@ trait PlacedExpressions:
               val qualifier = transformTerm(select.qualifier)(owner)
               val tpe = if placementInfo.modality.subjective then TypeRepr.of[Unit] else placementInfo.valueType
               if !canceled && !placementInfo.canonical && !(tpe.baseClasses contains select.symbol.owner) then
-                errorAndCancel(s"${select.symbol} is not a member of ${tpe.safeShow(Printer.SafeTypeReprShortCode)}", select.posInUserCode)
+                errorAndCancel(s"${select.symbol} is not a member of ${tpe.prettyShow}", select.posInUserCode)
                 select
               else
                 Select.copy(select)(qualifier, select.name)
@@ -435,8 +435,8 @@ trait PlacedExpressions:
     def notationWarning() =
       PlacementInfo(tpt.tpe) foreach: placementInfo =>
         report.warning(
-          s"Discouraged placement type notation. Expected type notation: ${placementInfo.showCanonical}" +
-          s"${System.lineSeparator}Placement types are imported by: import loci.language.*", tpt.posInUserCode)
+          s"Discouraged placement type notation. Expected type notation: ${placementInfo.showCanonicalFrom(owner.owner)}\n" +
+          s"Placement types are imported by: import loci.language.*", tpt.posInUserCode)
 
     def checkNotation(tree: Tree, infix: Boolean) = tree match
       case _: TypeIdent =>

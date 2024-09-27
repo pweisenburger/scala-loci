@@ -5,8 +5,8 @@ package components
 
 import utility.reflectionExtensions.*
 
-import scala.annotation.compileTimeOnly
-import scala.annotation.experimental
+import scala.annotation.{compileTimeOnly, experimental}
+import scala.collection.mutable
 import scala.reflect.TypeTest
 import scala.quoted.{Expr, Quotes, quotes, Type}
 
@@ -228,6 +228,48 @@ trait Commons:
     def asPackedValueType: PackedValueType[?] = tpe.asType match
       case t: Type[Any] @unchecked if tpe <:< TypeRepr.of[Any] => PackedValueType(using t)
       case _ => throw IllegalArgumentException(s"${tpe.safeShow} cannot be used as a value type")
+    def prettyShow =
+      tpe.safeShow(Printer.CompilerStyleTypeReprCode)
+    def prettyShowFrom(symbol: Symbol) =
+      tpe.safeShowFrom(symbol, Printer.CompilerStyleTypeReprCode)
+    def safeShowFrom(symbol: Symbol): String =
+      tpe.safeShowFrom(symbol, "<?>", quotes.reflect.Printer.SafeTypeReprCode)
+    def safeShowFrom(symbol: Symbol, fallback: String): String =
+      tpe.safeShowFrom(symbol, fallback, quotes.reflect.Printer.SafeTypeReprCode)
+    def safeShowFrom(symbol: Symbol, printer: Printer[TypeRepr]): String =
+      tpe.safeShowFrom(symbol, "<?>", printer)
+    def safeShowFrom(symbol: Symbol, fallback: String, printer: Printer[TypeRepr]): String =
+      val prefixes = mutable.Set.empty[String]
+      object prefixesCollector extends TypeMap(quotes):
+        override def transform(tpe: TypeRepr) = tpe match
+          case TypeRef(qualifier @ ThisType(tref), _) if qualifier.typeSymbol == symbol || qualifier.typeSymbol == symbol.moduleClass =>
+            prefixes +=
+              s"${tref.safeShow("", printer)}." +=
+              s"${tref.safeShow("", Printer.CompilerStyleTypeReprCode)}." +=
+              s"${tref.safeShow("", Printer.TypeReprCode)}." +=
+              s"${tref.safeShow("", Printer.TypeReprAnsiCode)}."
+            super.transform(tpe)
+          case _ =>
+            super.transform(tpe)
+      prefixesCollector.transform(tpe)
+      def stripPrefix(result: String, prefix: String, index: Int): String =
+        result.indexOf(prefix, index) match
+          case _ if prefix.isEmpty =>
+            result
+          case -1 =>
+            result
+          case 0 =>
+            stripPrefix(result.substring(prefix.length), prefix, 0)
+          case index =>
+            if Character.isWhitespace(result(index - 1)) ||
+               result(index - 1) == ',' || result(index - 1) == ';' ||
+               result(index - 1) == '(' || result(index - 1) == ')' ||
+               result(index - 1) == '[' || result(index - 1) == ']' ||
+               result(index - 1) == '{' || result(index - 1) == '}' then
+              stripPrefix(s"${result.substring(0, index)}${result.substring(index + prefix.length)}", prefix, index)
+            else
+              stripPrefix(result, prefix, index + 1)
+      prefixes.foldLeft(tpe.safeShow(fallback, printer)) { stripPrefix(_, _, 0) }
 
   extension (pos: Position)
     def firstCodeLine =
