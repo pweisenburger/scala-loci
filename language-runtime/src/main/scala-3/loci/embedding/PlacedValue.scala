@@ -35,6 +35,6 @@ object Placed:
     type Multiple[T]
 
   object Selection:
-    type Single[P, T] = PlacedValue.Resolution[P, Selected.Single[T]]
-    type Multiple[P, T] = PlacedValue.Resolution[P, Selected.Multiple[T]]
+    type Single[P, T] = PlacedValue[P, Selected.Single[T]] { type on = P }
+    type Multiple[P, T] = PlacedValue[P, Selected.Multiple[T]] { type on = P }
 end Placed

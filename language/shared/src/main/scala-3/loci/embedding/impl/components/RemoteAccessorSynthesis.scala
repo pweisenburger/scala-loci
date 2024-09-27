@@ -19,6 +19,8 @@ object RemoteAccessorSynthesis:
   private val synthesizedModuleSignatureCache = mutable.Map.empty[Any, Any]
   private val synthesizedPeerSignatureCache = mutable.Map.empty[Any, Any]
   private val synthesizedAccessorsCache = mutable.Map.empty[Any, Any]
+  private var placedValueInfoConstructorArgumentsChecked = false
+  private var marshallableInfoConstructorArgumentsChecked = false
 
 @experimental
 trait RemoteAccessorSynthesis:
@@ -832,7 +834,9 @@ trait RemoteAccessorSynthesis:
         case (tpe, Some(types)) => serializeTypeAndSanityCheck(tpe, module) map { value => Literal(StringConstant(value)) :: types }
         case _ => None
 
-      if argsTail.nonEmpty || (module hasAncestor { symbol => symbol.isMethod || symbol.isField }) || signature != abstractSignature then
+      val locallyScoped = module hasAncestor { symbol => symbol.isMethod || symbol.isField }
+
+      if argsTail.nonEmpty || locallyScoped || signature != abstractSignature then
         val symbol = newVal(
           module,
           generateName(),
@@ -841,8 +845,25 @@ trait RemoteAccessorSynthesis:
           Symbol.noSymbol)
         trySetThreadUnsafe(symbol)
         SymbolMutator.getOrErrorAndAbort.enter(module, symbol)
-        argsTail foreach: argsTail =>
-          SymbolMutator.getOrErrorAndAbort.updateAnnotation(symbol, symbols.marshallableInfo, argsHead :: argsTail)
+
+        argsHead :: argsTail.toList.flatten match
+          case List(signature, base, result, proxy) if !locallyScoped =>
+            if !RemoteAccessorSynthesis.marshallableInfoConstructorArgumentsChecked then
+              RemoteAccessorSynthesis.marshallableInfoConstructorArgumentsChecked = true
+              assert(
+                (symbols.marshallableInfo.primaryConstructor.paramSymss map { _ map { _.name } }) ==
+                List(List("signature", "base", "result", "proxy")))
+            SymbolMutator.getOrErrorAndAbort.updateAnnotationWithTree(
+              symbol,
+              New(TypeIdent(symbols.marshallableInfo))
+                .select(symbols.marshallableInfo.primaryConstructor)
+                .appliedTo(
+                  NamedArg("signature", signature),
+                  NamedArg("base", base),
+                  NamedArg("result", result),
+                  NamedArg("proxy", proxy)))
+          case _ =>
+
         Right(Marshallable(symbol, types, signature), ValDef(symbol, rhs map { _.changeOwner(symbol) }))
       else
         Left(s"Failed to serialize type for ${TransmittableTypes(types.base, TypeBounds.empty, types.result, types.proxy, TypeBounds.empty).showMore}.")
@@ -1073,7 +1094,24 @@ trait RemoteAccessorSynthesis:
               val argsHead = Literal(StringConstant(signature))
               val argsTail = List(argumentIdentifier, resultIdentifier) map { identifier => Literal(StringConstant(identifier)) }
 
-              SymbolMutator.getOrErrorAndAbort.updateAnnotation(symbol, symbols.placedValueInfo, argsHead :: argsTail)
+              val locallyScoped = module hasAncestor { symbol => symbol.isMethod || symbol.isField }
+
+              argsHead :: argsTail match
+                case List(signature, arguments, result) if !locallyScoped =>
+                  if !RemoteAccessorSynthesis.placedValueInfoConstructorArgumentsChecked then
+                    RemoteAccessorSynthesis.placedValueInfoConstructorArgumentsChecked = true
+                    assert(
+                      (symbols.placedValueInfo.primaryConstructor.paramSymss map { _ map { _.name } }) ==
+                      List(List("signature", "arguments", "result")))
+                  SymbolMutator.getOrErrorAndAbort.updateAnnotationWithTree(
+                    symbol,
+                    New(TypeIdent(symbols.placedValueInfo))
+                      .select(symbols.placedValueInfo.primaryConstructor)
+                      .appliedTo(
+                        NamedArg("signature", signature),
+                        NamedArg("arguments", arguments),
+                        NamedArg("result", result)))
+                case _ =>
 
               val key = original getOrElse:
                 val key = anonymousPlacedIndex

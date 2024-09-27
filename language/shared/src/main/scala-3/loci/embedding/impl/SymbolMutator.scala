@@ -9,7 +9,6 @@ class SymbolMutator private ():
   private val quotesImplClass = Class.forName("scala.quoted.runtime.impl.QuotesImpl")
   private val contextClass = Class.forName("dotty.tools.dotc.core.Contexts$Context")
   private val treeClass = Class.forName("dotty.tools.dotc.ast.Trees$Tree")
-  private val defdefClass = Class.forName("dotty.tools.dotc.ast.Trees$DefDef")
   private val typeClass = Class.forName("dotty.tools.dotc.core.Types$Type")
   private val symbolsClass = Class.forName("dotty.tools.dotc.core.Symbols")
   private val symbolClass = Class.forName("dotty.tools.dotc.core.Symbols$Symbol")
@@ -18,7 +17,6 @@ class SymbolMutator private ():
   private val scopeClass = Class.forName("dotty.tools.dotc.core.Scopes$Scope")
   private val emptyScopeClass = Class.forName("dotty.tools.dotc.core.Scopes$EmptyScope$")
   private val annotationClass = Class.forName("dotty.tools.dotc.core.Annotations$Annotation")
-  private val contextFunctionResultsClass = Class.forName("dotty.tools.dotc.transform.ContextFunctionResults$")
 
   private val ctx = quotesImplClass.getMethod("ctx")
   private val newLocalDummy = symbolsClass.getMethod("newLocalDummy", symbolClass, classOf[Int], contextClass)
@@ -37,8 +35,6 @@ class SymbolMutator private ():
   private val emptyScope = emptyScopeClass.getField("MODULE$")
   private val annotationApply = annotationClass.getMethod("apply", typeClass, classOf[List[?]], classOf[Long], contextClass)
   private val annotationApplyWithTree = annotationClass.getMethod("apply", treeClass)
-  private val contextFunctionResults = contextFunctionResultsClass.getField("MODULE$")
-  private val annotateContextResultsDefDef = contextFunctionResultsClass.getMethod("annotateContextResults", defdefClass, contextClass)
 
   def createLocalDummy(using Quotes)(symbol: quotes.reflect.Symbol): quotes.reflect.Symbol =
     newLocalDummy.invoke(null, symbol, 0, ctx.invoke(quotes)).asInstanceOf[quotes.reflect.Symbol]
@@ -64,10 +60,10 @@ class SymbolMutator private ():
     if classDenotationClass.isInstance(denotation) then
       invalidateSymbolMemberCaches.invoke(denotation, context)
 
-  def setFlag(using Quotes)(symbol: quotes.reflect.Symbol, flags: quotes.reflect.Flags) =
+  def setFlag(using Quotes)(symbol: quotes.reflect.Symbol, flags: quotes.reflect.Flags): Unit =
     flagSet.invoke(denot.invoke(symbol, ctx.invoke(quotes)), flags)
 
-  def resetFlag(using Quotes)(symbol: quotes.reflect.Symbol, flags: quotes.reflect.Flags) =
+  def resetFlag(using Quotes)(symbol: quotes.reflect.Symbol, flags: quotes.reflect.Flags): Unit =
     flagReset.invoke(denot.invoke(symbol, ctx.invoke(quotes)), flags)
 
 //  def registerCompanion(using Quotes)(symbol: quotes.reflect.Symbol, companion: quotes.reflect.Symbol) =
@@ -91,9 +87,7 @@ class SymbolMutator private ():
   def removeAnnotation(using Quotes)(symbol: quotes.reflect.Symbol, annotation: quotes.reflect.Symbol): Unit =
     val context = ctx.invoke(quotes)
     annotationRemove.invoke(denot.invoke(symbol, context), annotation, context)
-
-  def annotateContextResults(using Quotes)(stat: quotes.reflect.DefDef): Unit =
-    annotateContextResultsDefDef.invoke(contextFunctionResults.get(null), stat, ctx.invoke(quotes))
+end SymbolMutator
 
 object SymbolMutator:
   private val instance =
@@ -104,3 +98,4 @@ object SymbolMutator:
 
   def getOrErrorAndAbort(using Quotes): SymbolMutator =
     instance.getOrElse(quotes.reflect.report.errorAndAbort("Multitier modules not supported with current compiler version."))
+end SymbolMutator

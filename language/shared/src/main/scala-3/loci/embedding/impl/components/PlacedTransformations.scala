@@ -107,8 +107,8 @@ trait PlacedTransformations:
   private object contextVariableCleaner extends SafeTreeMap(quotes):
     private def fallbackIfContextType(term: Term) = term.tpe.asType match
       case '[ Nothing ] | '[ Null ] => term
-      case '[ embedding.Placement.Context[p] ] => '{ embedding.Placement.Context.fallback[p] }.asTerm
-      case '[ embedding.Multitier.Context ] => '{ embedding.Multitier.Context.fallback }.asTerm
+      case '[ embedding.Placement.Context[p] ] => Ref(symbols.placementContextFallback).appliedToType(TypeRepr.of[p])
+      case '[ embedding.Multitier.Context ] => Ref(symbols.multitierContextFallback)
       case _ => term
     override def transformTerm(term: Term)(owner: Symbol) = term match
       case Ident(_) =>

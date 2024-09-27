@@ -24,10 +24,11 @@ sealed trait TransmissionNothing {
 }
 
 object Transmission extends TransmissionNothing {
-  implicit def transmission[L, R, V, W, B, I, P, T, M, U, S <: Transmittables](implicit
+  implicit def transmission[L, R, V, W, B, I, P, T, N, M, U, S <: Transmittables](implicit
     ev0: Placement.Context.Resolution[L],
-    ev1: Multiplicity[L, R, V, W, M],
+    ev1: Multiplicity[L, R, V, W, N],
     ev2: Subjectivity[W, B],
     ev3: Transmittable.Resolution[B, I, U, P, S],
-    ev4: T =:= P): Transmission[V, R, T, L, M] = erased(ev0, ev1, ev2, ev3, ev4)
+    ev4: T =:= P,
+    ev5: M =:= N): Transmission[V, R, T, L, M] = erased(ev0, ev1, ev2, ev3, ev4)
 }

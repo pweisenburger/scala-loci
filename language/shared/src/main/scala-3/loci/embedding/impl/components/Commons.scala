@@ -39,6 +39,8 @@ trait Commons:
     val fromMultiple = Symbol.requiredPackage("loci.embedding").typeMember("fromMultiple")
     val nonplaced = Symbol.requiredModule("loci.embedding.Multitier").typeMember("nonplaced")
     val nonplacedType = Symbol.requiredModule("loci.embedding.Multitier").typeMember("type")
+    val multitierContextFallback = Symbol.requiredModule("loci.embedding.Multitier.Context").declaredField("fallback")
+    val placementContextFallback = Symbol.requiredModule("loci.embedding.Placement.Context").declaredMethod("fallback").head
     val base = TypeRepr.of[transmitter.Transmittable.Any[?, ?, ?]].typeSymbol.typeMember("Base")
     val intermediate = TypeRepr.of[transmitter.Transmittable.Any[?, ?, ?]].typeSymbol.typeMember("Intermediate")
     val result = TypeRepr.of[transmitter.Transmittable.Any[?, ?, ?]].typeSymbol.typeMember("Result")

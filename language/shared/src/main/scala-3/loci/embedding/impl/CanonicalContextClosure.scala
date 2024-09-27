@@ -170,6 +170,7 @@ def inferrableCanonicalPlacementTypeContextClosure[R: Type](using Quotes)(v: Exp
   // https://github.com/scala/scala3/blob/3.2.0/compiler/src/dotty/tools/dotc/typer/Typer.scala#L3687
   // https://github.com/scala/scala3/blob/3.3.0/compiler/src/dotty/tools/dotc/typer/Typer.scala#L3790
   // https://github.com/scala/scala3/blob/3.4.0/compiler/src/dotty/tools/dotc/typer/Typer.scala#L4030
+  // https://github.com/scala/scala3/blob/3.5.0/compiler/src/dotty/tools/dotc/typer/Typer.scala#L4304
   //
   // This hack is without unwanted side effects since we ensure that the expanding function
   // is the outer-most in the surrounding val or def.

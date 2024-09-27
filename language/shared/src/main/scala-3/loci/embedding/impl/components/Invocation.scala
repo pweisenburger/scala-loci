@@ -121,10 +121,11 @@ trait Invocation:
 
   private enum SelectionMode(val maybeType: Option[TypeRepr], val instanceBased: Boolean):
     val instances: Term
-    case Single(tpe: TypeRepr, instances: Term) extends SelectionMode(Some(tpe), instanceBased = true)
-    case Multiple(tpe: TypeRepr, instances: Term) extends SelectionMode(Some(tpe), instanceBased = true)
-    case All(tpe: TypeRepr, instances: Term) extends SelectionMode(Some(tpe), instanceBased = false)
-    case None(instances: Term) extends SelectionMode(Option.empty, instanceBased = false)
+    val instancesCount: Int
+    case Single(tpe: TypeRepr, instances: Term, instancesCount: Int) extends SelectionMode(Some(tpe), instanceBased = true)
+    case Multiple(tpe: TypeRepr, instances: Term, instancesCount: Int) extends SelectionMode(Some(tpe), instanceBased = true)
+    case All(tpe: TypeRepr, instances: Term, instancesCount: Int) extends SelectionMode(Some(tpe), instanceBased = false)
+    case None(instances: Term, instancesCount: Int) extends SelectionMode(Option.empty, instanceBased = false)
 
   private object SelectionMode:
     private def seq(elements: List[Term], tpe: TypeRepr) =
@@ -154,17 +155,17 @@ trait Invocation:
                 .appliedTo(Ref(args.head.symbol))))
 
     def apply(selection: Option[Either[(TypeRepr, List[Term]), TypeRepr]])(owner: Symbol) =
-      selection.fold(SelectionMode.None(emptyRemoteSeq)):
+      selection.fold(SelectionMode.None(emptyRemoteSeq, instancesCount = 0)):
         _.fold(
           (remote, remotes) => remotes match
             case List(remotes) if !(remotes.tpe =:= TypeRepr.of[Nothing]) && remotes.tpe <:< types.seq =>
-              SelectionMode.Multiple(remote, mappedRemoteRefSeq(remote, remotes)(owner))
+              SelectionMode.Multiple(remote, mappedRemoteRefSeq(remote, remotes)(owner), instancesCount = -1)
             case _ if remotes.sizeIs == 1 =>
-              SelectionMode.Single(remote, mappedRemoteRefSeq(remote, remoteSeq(remote, remotes))(owner))
+              SelectionMode.Single(remote, mappedRemoteRefSeq(remote, remoteSeq(remote, remotes))(owner), instancesCount = 1)
             case _ =>
-              SelectionMode.Multiple(remote, mappedRemoteRefSeq(remote, remoteSeq(remote, remotes))(owner)),
+              SelectionMode.Multiple(remote, mappedRemoteRefSeq(remote, remoteSeq(remote, remotes))(owner), instancesCount = remotes.size),
           remote =>
-            SelectionMode.All(remote, emptyRemoteSeq))
+            SelectionMode.All(remote, emptyRemoteSeq, instancesCount = -1))
   end SelectionMode
 
   private def destructPlacedValueAccess(
@@ -266,9 +267,9 @@ trait Invocation:
 
       case Right(localPeerInfo) =>
         val multiplicity = selectionMode match
-          case SelectionMode.Single(_, _) =>
+          case SelectionMode.Single(_, _, _) =>
             Some(Multiplicity.Single)
-          case SelectionMode.Multiple(_, _) =>
+          case SelectionMode.Multiple(_, _, _) =>
             Some(Multiplicity.Multiple)
           case _ =>
             localPeerInfo.ties.foldLeft(Option.empty[Multiplicity]):
@@ -464,7 +465,10 @@ trait Invocation:
                             .appliedTo(arguments, placed, signature, instances, requestResult)
 
                         if selectionMode.instanceBased then
-                          If(instances.select(symbols.iterableNonEmpty), Block(List(access), Literal(UnitConstant())), Literal(UnitConstant()))
+                          selectionMode.instancesCount match
+                            case -1 => If(instances.select(symbols.iterableNonEmpty), Block(List(access), Literal(UnitConstant())), Literal(UnitConstant()))
+                            case 0 => Literal(UnitConstant())
+                            case _ => access
                         else
                           access
                     end result

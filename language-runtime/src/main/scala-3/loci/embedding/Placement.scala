@@ -19,7 +19,6 @@ object Multitier:
   object Context:
     @compileTimeOnly("Expression can only be used in a multitier module.")
     given fallback: Context = erased
-  end Context
 
   sealed trait nonplaced
   infix type `type`[N >: nonplaced <: nonplaced, T] = Multitier.Context ?=> T
@@ -39,6 +38,7 @@ object Placement:
     @compileTimeOnly("Expression must be placed on a peer.")
     given fallback[P](using Context[?]): Resolution[P] = erased
 
+    @implicitNotFound("Expression must be placed on a peer.")
     sealed trait ResolutionWithFallback[+P]
 
     sealed trait ResolutionWithFallbackFallback:
