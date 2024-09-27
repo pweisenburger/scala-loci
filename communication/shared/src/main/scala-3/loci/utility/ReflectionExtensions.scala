@@ -743,11 +743,15 @@ object reflectionExtensions:
   extension (using Quotes)(printerModule: quotes.reflect.PrinterModule)
     def SafeTypeReprCode = safeTypeReprPrinter(quotes.reflect.Printer.TypeReprCode)
     def SafeTypeReprShortCode = safeTypeReprPrinter(quotes.reflect.Printer.TypeReprShortCode)
+    def CompilerStyleTypeReprCode = CompilerStylePrinter.typeReprPrinter(quotes.reflect.Printer.SafeTypeReprCode)
+    def CompilerStyleTypeReprShortFallbackCode = CompilerStylePrinter.typeReprPrinter(quotes.reflect.Printer.SafeTypeReprShortCode)
+    def CompilerStyleTreeCode = CompilerStylePrinter.treePrinter(quotes.reflect.Printer.TreeCode)
+    def CompilerStyleTreeShortFallbackCode = CompilerStylePrinter.treePrinter(quotes.reflect.Printer.TreeShortCode)
 
   private def safeTypeReprPrinter(using Quotes)(printer: quotes.reflect.Printer[quotes.reflect.TypeRepr]) =
-    new quotes.reflect.Printer[quotes.reflect.TypeRepr]:
-      import quotes.reflect.*
+    import quotes.reflect.*
 
+    new Printer[TypeRepr]:
       def show(tpe: TypeRepr) = showType(tpe)
 
       private def showType(tpe: TypeRepr, typeArgument: Boolean = false): String =
@@ -841,6 +845,43 @@ object reflectionExtensions:
         case _ =>
           s"val $name: ${showType(info)}"
   end safeTypeReprPrinter
+
+  private object CompilerStylePrinter:
+    private val (printType, printTree) =
+      try
+        val quotesImplClass = Class.forName("scala.quoted.runtime.impl.QuotesImpl")
+        val contextClass = Class.forName("dotty.tools.dotc.core.Contexts$Context")
+        val typeClass = Class.forName("dotty.tools.dotc.core.Types$Type")
+        val treeClass = Class.forName("dotty.tools.dotc.ast.Trees$Tree")
+        val printerClass = Class.forName("dotty.tools.dotc.printing.Printer")
+        val textClass = Class.forName("dotty.tools.dotc.printing.Texts$Text")
+
+        val ctx = quotesImplClass.getMethod("ctx")
+        val printer = contextClass.getMethod("printer")
+        val typeToText = printerClass.getMethod("toText", typeClass)
+        val treeToText = printerClass.getMethod("toText", treeClass)
+        val mkString = textClass.getMethod("mkString", classOf[Int], classOf[Boolean])
+
+        def print(quotes: Quotes, toText: java.lang.reflect.Method, value: Any) =
+          try
+            mkString.invoke(toText.invoke(printer.invoke(ctx.invoke(quotes)), value), Integer.MAX_VALUE, false) match
+              case result: String => Some(result)
+              case _ => None
+          catch case NonFatal(_) => None
+
+        (print(_, typeToText, _), print(_, treeToText, _))
+      catch
+        case NonFatal(_) =>
+          ((quotes: Quotes, tpe: Any) => None, (quotes: Quotes, tree: Any) => None)
+
+    def typeReprPrinter(using Quotes)(fallback: quotes.reflect.Printer[quotes.reflect.TypeRepr]) =
+      new quotes.reflect.Printer[quotes.reflect.TypeRepr]:
+        def show(tpe: quotes.reflect.TypeRepr) = printType(quotes, tpe) getOrElse fallback.show(tpe)
+
+    def treePrinter(using Quotes)(fallback: quotes.reflect.Printer[quotes.reflect.Tree]) =
+      new quotes.reflect.Printer[quotes.reflect.Tree]:
+        def show(tree: quotes.reflect.Tree) = printTree(quotes, tree) getOrElse fallback.show(tree)
+  end CompilerStylePrinter
 
   private object LazyRefStripping:
     private val stripLazyRef =
