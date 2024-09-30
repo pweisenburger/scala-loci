@@ -324,12 +324,18 @@ trait RemoteAccessorSynthesis:
         case _ => None
     end extension
 
-    def signature(peerType: TypeRepr, pos: Position) =
+    def signature(peerType: TypeRepr) =
       peerType.pathTerm match
         case Some(term) if isMultitierModule(term.symbol) =>
           val(symbol, _) = synthesizePeerSignature(peerType.typeSymbol.owner, peerType.typeSymbol)
           Some(term.select(symbol))
         case _ =>
+          val splicePos = Position.ofMacroExpansion
+          val pos = peerType.typeSymbol.pos match
+            case Some(pos) if pos.sourceFile == splicePos.sourceFile && pos.start >= splicePos.start && pos.end <= splicePos.end =>
+              pos
+            case _ =>
+              splicePos
           errorAndCancel(s"Invalid prefix for peer type: ${peerType.prettyShow}", pos)
           None
 
@@ -352,7 +358,7 @@ trait RemoteAccessorSynthesis:
       PeerInfo.ofModule(module).iterator flatMap: peerInfo =>
         val peer = peerInfo.peerType.typeSymbol
         if peer != defn.AnyClass then
-          val parents = peerInfo.parents flatMap { signature(_, peerInfo.pos) }
+          val parents = peerInfo.parents flatMap signature
 
           val parentList = Typed(
             Repeated(parents, TypeTree.of(using types.peerSignature.asType)),
@@ -367,7 +373,7 @@ trait RemoteAccessorSynthesis:
               Ref(moduleSignature.symbol))
 
           val ties = peerInfo.ties flatMap: (tie, multiplicity) =>
-            signature(tie, peerInfo.pos) map: tie =>
+            signature(tie) map: tie =>
               multiplicity match
                 case Multiplicity.Single => Tuple(List(tie, Ref(symbols.peerTieSingle)))
                 case Multiplicity.Optional => Tuple(List(tie, Ref(symbols.peerTieOptional)))

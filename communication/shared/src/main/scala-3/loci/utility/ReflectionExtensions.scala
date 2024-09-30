@@ -61,27 +61,6 @@ object reflectionExtensions:
       (symbol.flags is quotes.reflect.Flags.Module) &&
       (symbol.name == "package" || (symbol.name endsWith "$package") ||
        symbol.name == "package$" || (symbol.name endsWith "$package$"))
-
-    def safePos =
-      try
-        import quotes.reflect.*
-
-        val quotesImplClass = Class.forName("scala.quoted.runtime.impl.QuotesImpl")
-        val contextClass = Class.forName("dotty.tools.dotc.core.Contexts$Context")
-        val symbolClass = Class.forName("dotty.tools.dotc.core.Symbols$Symbol")
-        val sourcePositionClass = Class.forName("dotty.tools.dotc.util.SourcePosition")
-
-        val ctx = quotesImplClass.getMethod("ctx")
-        val sourcePos = symbolClass.getMethod("sourcePos", contextClass)
-        val exists = sourcePositionClass.getMethod("exists")
-
-        sourcePos.invoke(symbol, ctx.invoke(quotes)) match
-          case pos: Position @unchecked if Position.ofMacroExpansion.getClass.isInstance(pos) =>
-            Option.when(exists.invoke(pos) == true) { pos }
-          case _ =>
-            None
-      catch
-        case NonFatal(_) => None
   end extension
 
   extension (using Quotes)(flags: quotes.reflect.Flags)

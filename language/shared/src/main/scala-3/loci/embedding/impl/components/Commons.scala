@@ -230,9 +230,9 @@ trait Commons:
     def asPackedValueType: PackedValueType[?] = tpe.asType match
       case t: Type[Any] @unchecked if tpe <:< TypeRepr.of[Any] => PackedValueType(using t)
       case _ => throw IllegalArgumentException(s"${tpe.safeShow} cannot be used as a value type")
-    def prettyShow =
+    def prettyShow: String =
       tpe.safeShow(Printer.CompilerStyleTypeReprCode)
-    def prettyShowFrom(symbol: Symbol) =
+    def prettyShowFrom(symbol: Symbol): String =
       tpe.safeShowFrom(symbol, Printer.CompilerStyleTypeReprCode)
     def safeShowFrom(symbol: Symbol): String =
       tpe.safeShowFrom(symbol, "<?>", quotes.reflect.Printer.SafeTypeReprCode)
@@ -241,37 +241,61 @@ trait Commons:
     def safeShowFrom(symbol: Symbol, printer: Printer[TypeRepr]): String =
       tpe.safeShowFrom(symbol, "<?>", printer)
     def safeShowFrom(symbol: Symbol, fallback: String, printer: Printer[TypeRepr]): String =
-      val prefixes = mutable.Set.empty[String]
+      val prefixes = mutable.SortedSet.empty[String]
+
+      def showableType(tpe: TypeRepr): TypeRepr = tpe match
+        case tpe: ThisType => showableType(tpe.tref)
+        case tpe: TermRef if tpe.termSymbol.isModuleDef => tpe.qualifier.select(tpe.typeSymbol)
+        case _ => tpe
+
+      def addPrefixes(tpe: TypeRepr): Unit =
+        val prefix = showableType(tpe)
+        prefixes +=
+          s"${prefix.safeShow("", printer)}." +=
+          s"${prefix.safeShow("", Printer.CompilerStyleTypeReprCode)}." +=
+          s"${prefix.safeShow("", Printer.TypeReprCode)}." +=
+          s"${prefix.safeShow("", Printer.TypeReprAnsiCode)}."
+
       object prefixesCollector extends TypeMap(quotes):
         override def transform(tpe: TypeRepr) = tpe match
-          case TypeRef(qualifier @ ThisType(tref), _) if qualifier.typeSymbol == symbol || qualifier.typeSymbol == symbol.moduleClass =>
-            prefixes +=
-              s"${tref.safeShow("", printer)}." +=
-              s"${tref.safeShow("", Printer.CompilerStyleTypeReprCode)}." +=
-              s"${tref.safeShow("", Printer.TypeReprCode)}." +=
-              s"${tref.safeShow("", Printer.TypeReprAnsiCode)}."
+          case tpe: NamedType if tpe.qualifier.typeSymbol == symbol || tpe.qualifier.typeSymbol == symbol.moduleClass =>
+            addPrefixes(tpe.qualifier)
             super.transform(tpe)
           case _ =>
             super.transform(tpe)
-      prefixesCollector.transform(tpe)
-      def stripPrefix(result: String, prefix: String, index: Int): String =
+
+      if symbol.exists then
+        prefixesCollector.transform(tpe)
+        addPrefixes(symbol.typeRef)
+        addPrefixes(ThisType(symbol.owner).select(symbol))
+
+      addPrefixes(Symbol.requiredPackage("loci").typeRef)
+      addPrefixes(Symbol.requiredPackage("loci.language").typeRef)
+      addPrefixes(Symbol.requiredPackage("loci.embedding").typeRef)
+      addPrefixes(Symbol.requiredPackage("java.lang").typeRef)
+      addPrefixes(Symbol.requiredPackage("scala").typeRef)
+      addPrefixes(Symbol.requiredModule("scala.Prefix").typeRef)
+
+      def stripPrefix(prefix: String, result: String, index: Int): String =
         result.indexOf(prefix, index) match
           case _ if prefix.isEmpty =>
             result
           case -1 =>
             result
           case 0 =>
-            stripPrefix(result.substring(prefix.length), prefix, 0)
+            stripPrefix(prefix, result.substring(prefix.length), 0)
           case index =>
             if Character.isWhitespace(result(index - 1)) ||
                result(index - 1) == ',' || result(index - 1) == ';' ||
                result(index - 1) == '(' || result(index - 1) == ')' ||
                result(index - 1) == '[' || result(index - 1) == ']' ||
                result(index - 1) == '{' || result(index - 1) == '}' then
-              stripPrefix(s"${result.substring(0, index)}${result.substring(index + prefix.length)}", prefix, index)
+              stripPrefix(prefix, s"${result.substring(0, index)}${result.substring(index + prefix.length)}", index)
             else
-              stripPrefix(result, prefix, index + 1)
-      prefixes.foldLeft(tpe.safeShow(fallback, printer)) { stripPrefix(_, _, 0) }
+              stripPrefix(prefix, result, index + 1)
+
+      prefixes.foldRight(showableType(tpe).safeShow(fallback, printer)) { stripPrefix(_, _, 0) }
+    end safeShowFrom
 
   extension (pos: Position)
     def firstCodeLine =

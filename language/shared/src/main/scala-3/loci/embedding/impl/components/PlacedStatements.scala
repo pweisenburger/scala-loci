@@ -246,13 +246,13 @@ trait PlacedStatements:
   private def checkPeerType(stat: Statement, peerType: TypeRepr, module: ClassDef, statement: String, relation: String): Unit =
     if PeerInfo(peerType).isEmpty then
       errorAndCancel(
-        s"$statement must be $relation a peer type but is $relation ${peerType.prettyShowFrom(module.symbol)}",
+        s"$statement must be $relation a peer type but is $relation ${peerType.prettyShowFrom(module.symbol)}.",
         stat.posInUserCode.firstCodeLine)
     if peerType.typeSymbol != defn.AnyClass && !(peerType =:= ThisType(module.symbol).select(peerType.typeSymbol)) then
       val symbol = module.symbol
       val name = if symbol.isClassDef && symbol.isModuleDef then symbol.companionModule.name else symbol.name
       errorAndCancel(
-        s"$statement must be $relation a peer of module $name but is $relation peer ${peerType.prettyShowFrom(module.symbol)}",
+        s"$statement must be $relation a peer of module $name but is $relation peer ${peerType.prettyShowFrom(module.symbol)}.",
         stat.posInUserCode.firstCodeLine)
 
   private def checkPlacementInfo(definition: Statement, stat: Statement, placementInfo: PlacementInfo, module: ClassDef): Unit =
