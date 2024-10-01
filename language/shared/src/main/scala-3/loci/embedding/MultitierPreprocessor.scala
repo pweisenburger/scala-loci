@@ -227,13 +227,25 @@ object MultitierPreprocessor:
           case QuotesSymbol(symbol) => declarationsOfSymbol(symbol)
           case _ => declarationsOfTree(decl)
 
-        def annotationIndex(decl: Any)(predicate: Any => Boolean) = decl match
-          case QuotesSymbol(symbol) => annotationsUnsafe.invoke(denot.invoke(symbol, context), context) match
-            case annotations: List[?] => annotations indexWhere { annotation => predicate(annotationSymbol.invoke(annotation, context)) }
-            case _ => -1
-          case tree => modAnnotations.invoke(rawMods.invoke(tree)) match
-            case trees: List[?] => trees indexWhere predicate
-            case _ => -1
+        def annotationIndex(decl: Any)(predicate: Any => Boolean) =
+          def annotationIndexByTree(tree: Any) =
+            modAnnotations.invoke(rawMods.invoke(tree)) match
+              case trees: List[?] => trees indexWhere predicate
+              case _ => -1
+
+          def annotationIndexBySymbol(symbol: Symbol) =
+            val index = annotationsUnsafe.invoke(denot.invoke(symbol, context), context) match
+              case annotations: List[?] => annotations indexWhere { annotation => predicate(annotationSymbol.invoke(annotation, context)) }
+              case _ => -1
+            if index == -1 then
+              completerOriginalTree(symbol).fold(-1) { annotationIndexByTree }
+            else
+              index
+
+          decl match
+            case QuotesSymbol(symbol) => annotationIndexBySymbol(symbol)
+            case tree => annotationIndexByTree(tree)
+        end annotationIndex
 
         def hasAnnotation(decl: Any)(predicate: Any => Boolean) =
           annotationIndex(decl)(predicate) >= 0
