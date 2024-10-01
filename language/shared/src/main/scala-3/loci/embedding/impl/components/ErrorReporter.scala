@@ -10,6 +10,8 @@ trait ErrorReporter:
   this: Component =>
   import quotes.reflect.*
 
+  private var enabled = true
+
   private var errors = List.empty[(String, Position)]
 
   private def reporting  =
@@ -18,7 +20,8 @@ trait ErrorReporter:
     if filtered.nonEmpty then filtered else reversed
 
   def errorAndCancel(msg: String, pos: Position): Unit =
-    errors ::= (msg, pos)
+    if enabled then
+      errors ::= (msg, pos)
 
   def reportErrors(abortOnErrors: Boolean) =
     if abortOnErrors then
@@ -31,4 +34,10 @@ trait ErrorReporter:
       reporting foreach { report.error(_, _) }
 
   def canceled = errors.nonEmpty
+
+  def enableErrorAndCancel() = enabled = true
+
+  def disableErrorAndCancel() = enabled = false
+
+  def ErrorAndCancelEnabled = enabled
 end ErrorReporter

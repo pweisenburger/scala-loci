@@ -141,6 +141,8 @@ trait Commons:
     val targetName = TypeRepr.of[annotation.targetName].typeSymbol
     val asInstanceOf = '{ ?.asInstanceOf }.symbol
     val repeated = TypeRepr.of[`<repeated>`[?]].typeSymbol
+    val `&` = Symbol.requiredPackage("scala").typeMember("&")
+    val `|` = Symbol.requiredPackage("scala").typeMember("|")
 
   object types:
     val `language.on` = symbols.`language.on`.typeRef.appliedTo(List(TypeBounds.empty, TypeBounds.empty))
