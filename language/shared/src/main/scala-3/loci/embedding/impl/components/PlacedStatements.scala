@@ -213,14 +213,14 @@ trait PlacedStatements:
         case Inferred() => stat.posInUserCode.firstCodeLine
         case _ => tpt.posInUserCode
       if placementInfo.valueType.isContextFunctionType then
-        errorAndCancel(s"Placed type cannot be a context function type: ${placementInfo.valueType.prettyShow}", pos)
+        errorAndCancel(s"Placed type cannot be a context function type: ${prettyType(placementInfo.valueType.prettyShow)}", pos)
       else if !placementInfo.canonical then
         val message = tpt match
           case Inferred() => "Placement type could not be inferred. Explicit type ascription required."
           case _ => "Invalid placement type."
         errorAndCancel(
-          s"$message Expected type: ${placementInfo.showCanonicalFrom(stat.symbol.owner)}\n" +
-          s"Placement types are imported by: import loci.language.*", pos)
+          s"$message Expected type: ${prettyType(placementInfo.showCanonicalFrom(stat.symbol.owner))}\n" +
+          s"Placement types are imported by: ${prettyKeyword("import")} loci.language.*", pos)
       placementInfo.canonical
 
   private def statementTypeTreeInfo(stat: Statement) = stat match
@@ -246,13 +246,13 @@ trait PlacedStatements:
   private def checkPeerType(stat: Statement, peerType: TypeRepr, module: ClassDef, statement: String, relation: String): Unit =
     if PeerInfo(peerType).isEmpty then
       errorAndCancel(
-        s"$statement must be $relation a peer type but is $relation ${peerType.prettyShowFrom(module.symbol)}.",
+        s"$statement must be $relation a peer type but is $relation ${prettyType(peerType.prettyShowFrom(module.symbol))}.",
         stat.posInUserCode.firstCodeLine)
     if peerType.typeSymbol != defn.AnyClass && !(peerType =:= ThisType(module.symbol).select(peerType.typeSymbol)) then
       val symbol = module.symbol
       val name = if symbol.isClassDef && symbol.isModuleDef then symbol.companionModule.name else symbol.name
       errorAndCancel(
-        s"$statement must be $relation a peer of module $name but is $relation peer ${peerType.prettyShowFrom(module.symbol)}.",
+        s"$statement must be $relation a peer of module ${prettyType(name)} but is $relation peer ${prettyType(peerType.prettyShowFrom(module.symbol))}.",
         stat.posInUserCode.firstCodeLine)
 
   private def checkPlacementInfo(definition: Statement, stat: Statement, placementInfo: PlacementInfo, module: ClassDef): Unit =
@@ -419,8 +419,8 @@ trait PlacedStatements:
           val term = last(expr)
           tryReportTypeMismatch(term, tpes.head)
           errorAndCancel(
-            s"Found:    ${exprType.widenTermRefByName.prettyShow}\n" +
-            s"Required: ${tpes.head.widenTermRefByName.prettyShow}",
+            s"Found:    ${prettyType(exprType.widenTermRefByName.prettyShow)}\n" +
+            s"Required: ${prettyType(tpes.head.widenTermRefByName.prettyShow)}",
             term.pos)
 
     if !canceled then
@@ -433,13 +433,15 @@ trait PlacedStatements:
               val bodyPeerType = bodyPlacementInfo.peerType
               val bodyPeer = bodyPeerType.typeSymbol
               if !(bodyPeerType <:< placementInfo.peerType) then
-                errorAndCancel(s"Peer type ${bodyPeer.name} is not a subtype of placement compound peer type ${peer.name}.", expr.posInUserCode.firstCodeLine)
+                errorAndCancel(s"Peer type ${prettyType(bodyPeer.name)} is not a subtype of placement compound peer type ${prettyType(peer.name)}.", expr.posInUserCode.firstCodeLine)
               if peers contains bodyPeer then
-                errorAndCancel(s"Peer type ${bodyPeer.name} appears multiple times in placement compound.", expr.posInUserCode.firstCodeLine)
+                errorAndCancel(s"Peer type ${prettyType(bodyPeer.name)} appears multiple times in placement compound.", expr.posInUserCode.firstCodeLine)
               peers += bodyPeer
 
       if !canceled && !unit && !(peers contains placementInfo.peerType.typeSymbol) then
-        errorAndCancel(s"Placement compound does not cover common super peer type ${peer.name}. The common super peer can only be left out if the placed value has type Unit.", stat.posInUserCode.firstCodeLine)
+        errorAndCancel(
+          s"Placement compound does not cover common super peer type ${prettyType(peer.name)}. " +
+          s"The common super peer can only be left out if the placed value has type ${prettyType("Unit")}.", stat.posInUserCode.firstCodeLine)
     end if
   end checkPlacedBodies
 
@@ -541,13 +543,13 @@ trait PlacedStatements:
           else if bindings.sizeIs > 1 then
             val compound = extractPlacementBodies(expr) match
               case (_, tpe1) :: (_, tpe2) :: _ =>
-                tpe1.fold(""): tpe1 =>
-                  tpe2.fold(""): tpe2 =>
-                    PlacementInfo(tpe1).fold(""): placementInfo1 =>
-                      PlacementInfo(tpe2).fold(""): placementInfo2 =>
-                        s": (on[${placementInfo1.peerType.typeSymbol.name}] <...>) and (on[${placementInfo2.peerType.typeSymbol.name}] <...>)"
-              case _ => ""
-            errorAndCancel(s"Placed statements cannot be compound placed expressions$compound. Consider splitting them into separate statements.", stat.posInUserCode.firstCodeLine)
+                tpe1.fold(". "): tpe1 =>
+                  tpe2.fold(". "): tpe2 =>
+                    PlacementInfo(tpe1).fold(". "): placementInfo1 =>
+                      PlacementInfo(tpe2).fold(". "): placementInfo2 =>
+                        s": (on[${placementInfo1.peerType.typeSymbol.name}] <...>) and (on[${placementInfo2.peerType.typeSymbol.name}] <...>).\n"
+              case _ => ". "
+            errorAndCancel(s"Placed statements cannot be compound placed expressions${compound}Consider splitting them into separate statements.", stat.posInUserCode.firstCodeLine)
 
           if placementInfo.modality.subjective then
             errorAndCancel("Placed statements cannot be subjective.", stat.posInUserCode.firstCodeLine)

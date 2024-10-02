@@ -136,9 +136,9 @@ trait Dispatch:
               val prefix = s"${This(module).safeShow}."
               val other = path.select(decl)
               val message =
-                s"Multitier modules nested in ${fullName(module)} with the same name are not allowed: " +
-                s"${existing.safeShow(existing.symbol.name).stripPrefix(prefix)} and " +
-                s"${other.safeShow(other.symbol.name).stripPrefix(prefix)}"
+                s"Multitier modules nested in ${prettyType(fullName(module))} with the same name are not allowed: " +
+                s"${prettyType(existing.safeShow(existing.symbol.name).stripPrefix(prefix))} and " +
+                s"${prettyType(other.safeShow(other.symbol.name).stripPrefix(prefix))}"
 
               val positions = position(existing.symbol) flatMap { existing => position(decl) map { (existing, _) } }
               positions match

@@ -95,17 +95,17 @@ trait Peers:
                         else prettyLow
                       case _ =>
                         low.prettyShowFrom(module)
-                    Left(s"Type alias not allowed for peer specification. Use an upper bound: <: $prettyLow", pos.merge)
+                    Left(s"Type alias not allowed for peer specification. Use an upper bound: ${prettyType(s"<: $prettyLow")}", pos.merge)
                   else
-                    Left(s"Lower type bound not allowed for peer specification: >: ${low.prettyShowFrom(module)}", pos.merge)
+                    Left(s"Lower type bound not allowed for peer specification: ${prettyType(s">: ${low.prettyShowFrom(module)}")}", pos.merge)
 
                 case tpe =>
                   val pos = reference flatMap:
                     case TypeDef(_, rhs) => Right(rhs.posInUserCode)
                     case tree => Left(tree.posInUserCode)
-                  Left(s"Unexpected type in peer specification: ${tpe.prettyShowFrom(module)}", pos.merge)
+                  Left(s"Unexpected type in peer specification: ${prettyType(tpe.prettyShowFrom(module))}", pos.merge)
             else
-              Left(s"No peer type: @peer type ${symbol.name}", (reference map { _.posInUserCode }).merge)
+              Left(s"No peer type: ${prettyAnnotation("@peer")} ${prettyKeyword("type")} ${prettyType(symbol.name)}", (reference map { _.posInUserCode }).merge)
           end result
 
           if !shallow then
@@ -116,7 +116,7 @@ trait Peers:
           result
 
       case _ =>
-        Left("No peer type: @peer type", (reference map { _.posInUserCode }).merge)
+        Left(s"No peer type: ${prettyAnnotation("@peer")} ${prettyKeyword("type")}", (reference map { _.posInUserCode }).merge)
     end check
 
     private inline def checkIfNotShallow(tpe: TypeRepr, reference: Either[Position, Tree], qualifier: Option[TypeRepr], shallow: Boolean) =
@@ -126,7 +126,7 @@ trait Peers:
     : Either[(String, Position), List[(TypeRef, Multiplicity)]] =
       def peerModuleMessage =
         Option.unless(isMultitierModule(peerType.typeSymbol.owner)):
-          (s"Peer ${peerType.prettyShowFrom(module)} is not defined in a multitier module.", pos)
+          (s"Peer ${prettyType(peerType.prettyShowFrom(module))} is not defined in a multitier module.", pos)
 
       def referencedPeersNestedModuleMessage =
         def thisTypeIfPossible(tpe: TypeRepr) = tpe match
@@ -154,8 +154,8 @@ trait Peers:
 
         parents.iterator ++ (ties.iterator map { (tie, _) => tie }) collectFirst:
           case parent if !checkPeerPath(parent.qualifier) =>
-            (s"Peer ${peerType.typeSymbol.name} defined in module ${peerType.qualifier.prettyShowFrom(module)} refers to " +
-             s"peer ${parent.typeSymbol.name} defined in module ${parent.qualifier.prettyShowFrom(module)}, but the modules are not nested multitier modules.",
+            (s"Peer ${prettyType(peerType.typeSymbol.name)} defined in module ${prettyType(peerType.qualifier.prettyShowFrom(module))} refers to " +
+             s"peer ${prettyType(parent.typeSymbol.name)} defined in module ${prettyType(parent.qualifier.prettyShowFrom(module))}, but the modules are not nested multitier modules.",
              pos)
       end referencedPeersNestedModuleMessage
 
@@ -185,8 +185,8 @@ trait Peers:
                   None
 
             widenedTie map: (peerTie, baseTie, relation, tie, base) =>
-              (s"$peerTie tie to peer ${tie.prettyShowFrom(module)} defined for peer ${peerType.prettyShowFrom(module)} " +
-               s"does not conform to $baseTie tie $relation ${base.prettyShowFrom(module)}.",
+              (s"$peerTie tie to peer ${prettyType(tie.prettyShowFrom(module))} defined for peer ${prettyType(peerType.prettyShowFrom(module))} " +
+               s"does not conform to $baseTie tie $relation ${prettyType(base.prettyShowFrom(module))}.",
                pos)
       end widenedBaseModulePeerTieMessage
 
@@ -221,8 +221,8 @@ trait Peers:
                 val (superMultiplicity, subMultiplicity) =
                   if multiplicity1 == Multiplicity.Optional then ("optional", "optional or single")
                   else ("single", "single")
-                (s"Tie to peer ${peer0.prettyShowFrom(module)} needs to be $subMultiplicity " +
-                 s"because tie to super peer ${peer1.prettyShowFrom(module)} is $superMultiplicity.",
+                (s"Tie to peer ${prettyType(peer0.prettyShowFrom(module))} needs to be $subMultiplicity " +
+                 s"because tie to super peer ${prettyType(peer1.prettyShowFrom(module))} is $superMultiplicity.",
                  pos)
 
       peerModuleMessage orElse
@@ -252,7 +252,7 @@ trait Peers:
           case Left(pos) => pos
           case Right(Applied(orType, List(_, _))) if orType.symbol == symbols.`|` => orType.posInUserCode
           case Right(tree) => tree.posInUserCode
-        Left(s"Union type not allowed in peer specification: ${tpe.prettyShowFrom(module)}", pos)
+        Left(s"Union type not allowed in peer specification: ${prettyType(tpe.prettyShowFrom(module))}", pos)
 
       case Refinement(parent: TypeRef, names.tie, info) => info match
         case TypeBounds(low: TypeRef, hi) if bottomType(low) =>
@@ -272,18 +272,18 @@ trait Peers:
             case Refined(_, refinement :: _) => Left(refinement.posInUserCode)
             case tree => Left(tree.posInUserCode)
           if pos.isLeft && low =:= hi then
-            Left(s"Type alias not allowed for peer tie specification. Use an upper bound: <: ${low.prettyShowFrom(module)}", pos.merge)
+            Left(s"Type alias not allowed for peer tie specification. Use an upper bound: ${prettyType(s"<: ${low.prettyShowFrom(module)}")}", pos.merge)
           else
-            Left(s"Lower type bound not allowed for peer tie specification: >: ${low.prettyShowFrom(module)}", pos.merge)
+            Left(s"Lower type bound not allowed for peer tie specification: ${prettyType(s">: ${low.prettyShowFrom(module)}")}", pos.merge)
 
         case _ =>
-          Left(s"Unexpected type in peer tie specification: ${info.prettyShowFrom(module)}", (reference map { _.posInUserCode }).merge)
+          Left(s"Unexpected type in peer tie specification: ${prettyType(info.prettyShowFrom(module))}", (reference map { _.posInUserCode }).merge)
 
       case Refinement(_, name, _) =>
-        Left(s"Unexpected type member in peer specification: type $name", (reference map { _.posInUserCode }).merge)
+        Left(s"Unexpected type member in peer specification: ${prettyKeyword("type")} ${prettyType(name)}", (reference map { _.posInUserCode }).merge)
 
       case _ =>
-        Left(s"Unexpected type in peer specification: ${tpe.prettyShowFrom(module)}", (reference map { _.posInUserCode }).merge)
+        Left(s"Unexpected type in peer specification: ${prettyType(tpe.prettyShowFrom(module))}", (reference map { _.posInUserCode }).merge)
     end parentsAndTies
 
     private def ties(tpe: TypeRepr, reference: Either[Position, Tree], qualifier: TypeRepr, module: Symbol, shallow: Boolean)
@@ -305,7 +305,7 @@ trait Peers:
           case Left(pos) => pos
           case Right(Applied(orType, List(_, _))) if orType.symbol == symbols.`|` => orType.posInUserCode
           case Right(tree) => tree.posInUserCode
-        Left(s"Union type not allowed in peer tie specification: ${tpe.prettyShowFrom(module)}", pos)
+        Left(s"Union type not allowed in peer tie specification: ${prettyType(tpe.prettyShowFrom(module))}", pos)
 
       case AppliedType(tycon, List(MaybeLazyRef(arg: TypeRef))) =>
         object MultiplicityName:
@@ -321,15 +321,15 @@ trait Peers:
           else if symbol == symbols.optional then Right(Multiplicity.Optional)
           else if symbol == symbols.multiple then Right(Multiplicity.Multiple)
           else Left(
-            s"Unexpected multiplicity in peer tie specification: ${symbol.name} " +
-            s"(expected one of: ${symbols.single.name}, ${symbols.optional.name}, ${symbols.multiple.name})",
+            s"Unexpected multiplicity in peer tie specification: ${prettyType(symbol.name)}\n" +
+            s"Expected one of: ${prettyType(symbols.single.name)}, ${prettyType(symbols.optional.name)}, ${prettyType(symbols.multiple.name)}",
             tyconPos)
         multiplicity flatMap: multiplicity =>
           checkIfNotShallow(arg, Left(argPos), Some(qualifier), shallow) map: _ =>
             List(arg -> multiplicity)
 
       case _ =>
-        Left(s"Unexpected type in peer tie specification: ${tpe.prettyShowFrom(module)}", (reference map { _.posInUserCode }).merge)
+        Left(s"Unexpected type in peer tie specification: ${prettyType(tpe.prettyShowFrom(module))}", (reference map { _.posInUserCode }).merge)
     end ties
 
     private object MaybeLazyRef:

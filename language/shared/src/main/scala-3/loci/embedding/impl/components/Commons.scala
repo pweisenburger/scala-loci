@@ -7,7 +7,8 @@ import utility.reflectionExtensions.*
 
 import scala.annotation.{compileTimeOnly, experimental}
 import scala.collection.mutable
-import scala.reflect.TypeTest
+//import scala.reflect.TypeTest
+import scala.util.control.NonFatal
 import scala.quoted.{Expr, Quotes, quotes, Type}
 
 object Commons:
@@ -298,6 +299,46 @@ trait Commons:
 
       prefixes.foldRight(showableType(tpe).safeShow(fallback, printer)) { stripPrefix(_, _, 0) }
     end safeShowFrom
+
+  def prettyKeyword(value: String): String =
+    keywordColor(value)
+
+  def prettyType(value: String): String =
+    typeColor(value)
+
+  def prettyAnnotation(value: String): String =
+    annotationColor(value)
+
+  private val (keywordColor, typeColor, annotationColor) =
+    val default = identity[String]
+    try
+      val quotesImplClass = Class.forName("scala.quoted.runtime.impl.QuotesImpl")
+      val contextClass = Class.forName("dotty.tools.dotc.core.Contexts$Context")
+      val syntaxHighlighting = Class.forName("dotty.tools.dotc.printing.SyntaxHighlighting")
+
+      val ctx = quotesImplClass.getMethod("ctx")
+      val useColors = contextClass.getMethod("useColors")
+
+      inline def colorByName(name: String) =
+        syntaxHighlighting.getMethod(name).invoke(null) match
+          case color: String => color
+
+      val noColor = colorByName("NoColor")
+      val keywordColor = colorByName("KeywordColor")
+      val typeColor = colorByName("TypeColor")
+      val annotationColor = colorByName("AnnotationColor")
+
+      def color(color: String, value: String) =
+        s"$color$value$noColor"
+
+      if useColors.invoke(ctx.invoke(quotes)) == true then
+        (color(keywordColor, _), color(typeColor, _), color(annotationColor, _))
+      else
+        (default, default, default)
+    catch
+      case NonFatal(_) =>
+        (default, default, default)
+  end val
 
   extension (pos: Position)
     def firstCodeLine =

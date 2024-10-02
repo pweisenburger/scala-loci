@@ -30,9 +30,9 @@ trait Invocation:
           val name = term.safeShow(term.symbol.name).replace(".this.super$", ".super.").replace("super$", "super.")
           if name.last == '$' then name.init else name
         else
-          s"${name(term.symbol)} of multitier module ${name(term.qualifier.symbol)}"
+          s"${name(term.symbol)} of multitier module ${prettyType(name(term.qualifier.symbol))}"
       errorAndCancel(
-        s"Access to value $reference not allowed from module ${fullName(module)}",
+        s"Access to value $reference not allowed from module ${prettyType(fullName(module))}",
         term.posInUserCode.lastCodeLine)
 
     path
@@ -181,8 +181,8 @@ trait Invocation:
         selectionMode.maybeType foreach: remotePeerType =>
           if !(remotePeerType <:< placementInfo.peerType) then
             errorAndCancel(
-              s"Selected remote peer ${remotePeerType.prettyShowFrom(module)} " +
-              s"is not a subtype of the peer ${placementInfo.peerType.prettyShowFrom(module)} of the placed value",
+              s"Selected remote peer ${prettyType(remotePeerType.prettyShowFrom(module))} " +
+              s"is not a subtype of the peer ${prettyType(placementInfo.peerType.prettyShowFrom(module))} of the placed value.",
               if call then term.posInUserCode.firstCodeLine else term.posInUserCode.lastCodeLine)
 
         if placementInfo.modality.local then
@@ -193,15 +193,15 @@ trait Invocation:
         placementInfo.modality.subjectivePeerType foreach: subjective =>
           if !(localPeerType <:< subjective) then
             errorAndCancel(
-              s"Remote value that is subjectively dispatched to ${subjective.prettyShowFrom(module)} peer " +
-              s"cannot be accessed on ${placementInfo.peerType.prettyShowFrom(module)} peer.",
+              s"Remote value that is subjectively dispatched to ${prettyType(subjective.prettyShowFrom(module))} peer " +
+              s"cannot be accessed on ${prettyType(placementInfo.peerType.prettyShowFrom(module))} peer.",
               term.posInUserCode.firstCodeLine)
 
         retrieval foreach: (local, remote, name) =>
           if !(local =:= localPeerType) then
             errorAndCancel(
-              s"Remote access resolved the local peer as ${local.prettyShowFrom(module)} " +
-              s"but the local peer is ${localPeerType.prettyShowFrom(module)}.",
+              s"Remote access resolved the local peer as ${prettyType(local.prettyShowFrom(module))} " +
+              s"but the local peer is ${prettyType(localPeerType.prettyShowFrom(module))}.",
               term.posInUserCode.lastCodeLine)
 
           val (remotePeerName, remotePeerType) =
@@ -209,8 +209,8 @@ trait Invocation:
 
           if !(remote =:= remotePeerType) then
             errorAndCancel(
-              s"Remote access resolved the remote peer as ${remote.prettyShowFrom(module)} " +
-              s"but the $remotePeerName is ${placementInfo.peerType.prettyShowFrom(module)}.",
+              s"Remote access resolved the remote peer as ${prettyType(remote.prettyShowFrom(module))} " +
+              s"but the $remotePeerName is ${prettyType(placementInfo.peerType.prettyShowFrom(module))}.",
               term.posInUserCode.lastCodeLine)
 
           reference.symbol.info match
@@ -282,7 +282,7 @@ trait Invocation:
           case Some(tie) =>
             def multiplicityName(tpe: TypeRepr) =
               val name = tpe.typeSymbol.name
-              if selectionMode.instanceBased then name.toLowerCase else name
+              if selectionMode.instanceBased then name.toLowerCase else prettyType(name)
 
             val prefix = if selectionMode.instanceBased then "the selection is specified to be" else "the tie is specified as"
 
@@ -296,10 +296,10 @@ trait Invocation:
             tieMismatchMessage foreach: message =>
               val prefix =
                 if selectionMode.instanceBased then
-                  s"Remote access resolved the selection of ${remote.prettyShowFrom(module)} peers to be"
+                  s"Remote access resolved the selection of ${prettyType(remote.prettyShowFrom(module))} peers to be"
                 else
-                  s"Remote access resolved the tie from ${local.prettyShowFrom(module)} peer " +
-                  s"to ${remote.prettyShowFrom(module)} peer as"
+                  s"Remote access resolved the tie from ${prettyType(local.prettyShowFrom(module))} peer " +
+                  s"to ${prettyType(remote.prettyShowFrom(module))} peer as"
               errorAndCancel(
                 s"$prefix ${multiplicityName(tie)} but $message.",
                 if call then term.posInUserCode.firstCodeLine else term.posInUserCode.lastCodeLine)
@@ -307,8 +307,8 @@ trait Invocation:
           case _ =>
             if multiplicity.isEmpty then
               errorAndCancel(
-                s"No tie is specified from ${local.prettyShowFrom(module)} peer " +
-                s"to ${remote.prettyShowFrom(module)} peer.",
+                s"No tie is specified from ${prettyType(local.prettyShowFrom(module))} peer " +
+                s"to ${prettyType(remote.prettyShowFrom(module))} peer.",
                 if call then term.posInUserCode.firstCodeLine else term.posInUserCode.lastCodeLine)
   end checkTieMultiplicities
 
@@ -493,14 +493,14 @@ trait Invocation:
                   else
                     val remote = transformedRemote.tpe.baseType(symbols.remote).typeArgs.head
                     if !(remote <:< subjective) then
-                      Some(remote.prettyShowFrom(module))
+                      Some(prettyType(remote.prettyShowFrom(module)))
                     else
                       None
 
                 instance match
                   case Some(instance) =>
                     errorAndCancel(
-                      s"Value that is subjectively dispatched to ${subjective.prettyShowFrom(module)} peer " +
+                      s"Value that is subjectively dispatched to ${prettyType(subjective.prettyShowFrom(module))} peer " +
                       s"cannot be invoked for $instance peer instance.",
                       term.posInUserCode.firstCodeLine)
                     term
@@ -523,8 +523,8 @@ trait Invocation:
                     else
                       "value"
                   errorAndCancel(
-                    s"Access to $value on ${placementInfo.peerType.prettyShowFrom(module)} peer not allowed " +
-                    s"on ${peerType.prettyShowFrom(module)} peer.",
+                    s"Access to $value on ${prettyType(placementInfo.peerType.prettyShowFrom(module))} peer not allowed " +
+                    s"on ${prettyType(peerType.prettyShowFrom(module))} peer.",
                     reference.posInUserCode.firstCodeLine)
                   None
                 else

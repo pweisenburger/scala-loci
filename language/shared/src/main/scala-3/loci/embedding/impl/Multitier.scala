@@ -135,8 +135,8 @@ object Multitier:
 
       case _ =>
         report.error(
-          "@multitier annotation is only applicable to classes, traits or objects " +
-          "and to values nested inside multitier classes, traits or objects.")
+          s"${prettyAnnotation("@multitier")} annotation is only applicable to classes, traits or objects " +
+           "and to values nested inside multitier classes, traits or objects.")
         List(tree) ++ companion
   end annotation
 end Multitier

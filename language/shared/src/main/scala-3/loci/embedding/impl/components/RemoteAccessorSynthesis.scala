@@ -299,12 +299,12 @@ trait RemoteAccessorSynthesis:
     def resolveSerializable(tpe: TypeRepr) =
       resolve(
         symbols.serializable.typeRef.appliedTo(tpe),
-        s"${tpe.prettyShow} is not serializable.").asTerm
+        s"${prettyType(tpe.prettyShow)} is not serializable.").asTerm
 
     def resolveTransmittable(tpe: TypeRepr, allowFailureForTypeParameters: Boolean) =
       resolve(
         symbols.transmittable.typeRef.appliedTo(List(tpe, TypeBounds.empty, TypeBounds.empty, TypeBounds.empty, TypeBounds.empty)),
-        s"${tpe.prettyShow} is not transmittable.").asTransmittable(allowFailureForTypeParameters)
+        s"${prettyType(tpe.prettyShow)} is not transmittable.").asTransmittable(allowFailureForTypeParameters)
   end Resolution
 
   private def signatures(module: Symbol) =
@@ -336,7 +336,7 @@ trait RemoteAccessorSynthesis:
               pos
             case _ =>
               splicePos
-          errorAndCancel(s"Invalid prefix for peer type: ${peerType.prettyShow}", pos)
+          errorAndCancel(s"Invalid prefix for peer type: ${prettyType(peerType.prettyShow)}", pos)
           None
 
     val moduleIdentifier =
@@ -534,13 +534,13 @@ trait RemoteAccessorSynthesis:
           parent.fold(s"$message inherited $name", tree.posInUserCode.firstCodeLine): parent =>
             symbolForParent match
               case Some(symbol) if parent.symbol == symbol.maybeOwner =>
-                (s"$message $name, inherited from ${parent.symbol.name}", parent.posInUserCode)
+                (s"$message $name, inherited from ${prettyType(parent.symbol.name)}", parent.posInUserCode)
               case Some(symbol) if symbol.maybeOwner.exists && symbol.maybeOwner.maybeOwner == module.maybeOwner =>
-                (s"$message $name, defined in ${symbol.maybeOwner.name}, inherited through ${parent.symbol.name}", parent.posInUserCode)
+                (s"$message $name, defined in ${prettyType(symbol.maybeOwner.name)}, inherited through ${prettyType(parent.symbol.name)}", parent.posInUserCode)
               case Some(symbol) if symbol.maybeOwner.exists =>
-                (s"$message $name, defined in ${fullName(symbol.maybeOwner)}, inherited through ${parent.symbol.name}", parent.posInUserCode)
+                (s"$message $name, defined in ${prettyType(fullName(symbol.maybeOwner))}, inherited through ${prettyType(parent.symbol.name)}", parent.posInUserCode)
               case _ =>
-                (s"$message $name, inherited through ${parent.symbol.name}", parent.posInUserCode)
+                (s"$message $name, inherited through ${prettyType(parent.symbol.name)}", parent.posInUserCode)
     end accessorGenerationFailureMessageProlog
 
     def marshallingIdentifier(name: String) =
@@ -669,7 +669,7 @@ trait RemoteAccessorSynthesis:
     val transmittableTypeMap = MutableCachedTypeSeqMap[Transmittable]
 
     def incoherenceMessage(tpe: TypeRepr) =
-      s"Incoherent transmittables for type ${tpe.prettyShow}"
+      s"Incoherent transmittables for type ${prettyType(tpe.prettyShow)}"
 
     object localVariablesCollector extends TreeAccumulator[(Set[Symbol], Boolean)]:
       def foldTree(variables: (Set[Symbol], Boolean), tree: Tree)(owner: Symbol) =
@@ -697,15 +697,15 @@ trait RemoteAccessorSynthesis:
                 if !(transmittable.types.base =:= other.types.base) ||
                    !(transmittable.types.intermediate =:= other.types.intermediate) ||
                    !(transmittable.types.result =:= other.types.result) then
-                  errorAndCancel(s"${incoherenceMessage(other.types.base)}. Found ${other.types.show} and ${transmittable.types.show}.", pos)
+                  errorAndCancel(s"${incoherenceMessage(other.types.base)}. Found ${prettyType(other.types.show)} and ${prettyType(transmittable.types.show)}.", pos)
                 else if !(transmittable.types.proxy =:= other.types.proxy) then
-                  errorAndCancel(s"${incoherenceMessage(other.types.base)}. Found ${other.types.showMore} and ${transmittable.types.showMore}.", pos)
+                  errorAndCancel(s"${incoherenceMessage(other.types.base)}. Found ${prettyType(other.types.showMore)} and ${prettyType(transmittable.types.showMore)}.", pos)
                 else
-                  errorAndCancel(s"${incoherenceMessage(other.types.base)} with type ${transmittable.types.showMore}.", pos)
+                  errorAndCancel(s"${incoherenceMessage(other.types.base)} with type ${prettyType(transmittable.types.showMore)}.", pos)
             case _ =>
               transmittableTypeMap.addNewTypeEntry(transmittable.types.base, transmittable)
         else
-          errorAndCancel(s"Illegal transmittable for type ${transmittable.types.base.prettyShow} referring to local variable.", pos)
+          errorAndCancel(s"Illegal transmittable for type ${prettyType(transmittable.types.base.prettyShow)} referring to local variable.", pos)
 
     val inheritedPlacedAccessors =
       synthesizeAllPlacedAccessors(module, includeFirst = false)
@@ -817,7 +817,7 @@ trait RemoteAccessorSynthesis:
           else if types.transmittables derivesFrom symbols.none then
             Right(Ref(symbols.noneContext))
           else
-            Left(s"${types.base.prettyShow} is not transmittable")
+            Left(s"${prettyType(types.base.prettyShow)} is not transmittable")
 
         contextBuilder(transmittable.types) flatMap: builder =>
           resolveSerializable(transmittable.types.intermediate) map: serializer =>
@@ -872,7 +872,7 @@ trait RemoteAccessorSynthesis:
 
         Right(Marshallable(symbol, types, signature), ValDef(symbol, rhs map { _.changeOwner(symbol) }))
       else
-        Left(s"Failed to serialize type for ${TransmittableTypes(types.base, TypeBounds.empty, types.result, types.proxy, TypeBounds.empty).showMore}.")
+        Left(s"Failed to serialize type for ${prettyType(TransmittableTypes(types.base, TypeBounds.empty, types.result, types.proxy, TypeBounds.empty).showMore)}.")
     end marshallable
 
     val marshallableUnit = Marshallable(symbols.marshallableUnit, symbols.marshallableUnit.owner)
@@ -921,10 +921,10 @@ trait RemoteAccessorSynthesis:
         if conformsToMarshallable(transmittable.types.asMarshallableTypes) then
           body
         else
-          val message = s"${transmittable.types.base.prettyShow} is not transmittable"
+          val message = s"${prettyType(transmittable.types.base.prettyShow)} is not transmittable"
           Left:
-            if required.maybeProxy.nonEmpty then s"$message. Found ${transmittable.types.showMore}, required ${requiredTypes.showMore}."
-            else s"$message. Found ${transmittable.types.show}, required ${requiredTypes.show}."
+            if required.maybeProxy.nonEmpty then s"$message. Found ${prettyType(transmittable.types.showMore)}, required ${prettyType(requiredTypes.showMore)}."
+            else s"$message. Found ${prettyType(transmittable.types.show)}, required ${prettyType(requiredTypes.show)}."
 
       if conformsToPredefinedMarshallable(TypeRepr.of[Unit]) then
         Right(() => Right(Some(marshallableUnit)))
