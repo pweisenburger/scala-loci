@@ -33,9 +33,9 @@ object MultitierPreprocessor:
     val `embedding.of` = Symbol.requiredPackage("loci.embedding").typeMember("of")
     val `language.multitier` = Symbol.requiredClass("loci.language.multitier")
     val `embedding.multitier` = Symbol.requiredClass("loci.embedding.multitier")
-    val nonplaced = Symbol.requiredClass("loci.embedding.Multitier.nonplaced")
-    val `type` = Symbol.requiredModule("loci.embedding.Multitier").typeMember("type")
     val `Placed.Context` = Symbol.requiredClass("loci.embedding.On.Placed.Context")
+    val `type` = Symbol.requiredModule("loci.embedding.Multitier").typeMember("type")
+    val nonplaced = Symbol.requiredClass("loci.embedding.Multitier.nonplaced")
     val peer = Symbol.requiredClass("loci.language.peer")
     val deferred = Symbol.requiredClass("loci.language.deferred")
     val placed = Symbol.requiredMethod("loci.language.placed.apply")
@@ -381,7 +381,7 @@ object MultitierPreprocessor:
             // insert placed syntax for definitions with placement type (or all definitions if configured)
             // insert implicit context argument for definitions with arguments (if configured),
             // insert compile-time-only annotation (possibly if configured)
-            if valOrDefDefClass.isInstance(tree) && !(flags(tree) is Flags.ParamAccessor) then
+            if valOrDefDefClass.isInstance(tree) && !(flags(tree) is Flags.ParamAccessor) && !(flags(tree) is Flags.Inline) then
               val rhs = unforcedRhs.invoke(tree)
 
               val hasNoParams =
@@ -450,8 +450,9 @@ object MultitierPreprocessor:
               if multitierAnnottee then
                 // allow abstract values in objects
                 if isEmpty.invoke(rhs) == true then
-                  if flags(decl) is Flags.Module then
-                    if !hasAnnotationSymbol(tree, deferred) then
+                  val isDeferred = hasAnnotationSymbol(tree, deferred)
+                  if (flags(decl) is Flags.Module) || (flags(decl) is Flags.Final) && isDeferred then
+                    if !isDeferred then
                       setMods.invoke(tree, modWithAddedAnnotation.invoke(rawMods.invoke(tree), TypedSplice(deferredAnnotation)))
                     if valDefClass.isInstance(tree) then
                       mutateField(valRhs, tree, TypedSplice(Ref(uninitialized)))

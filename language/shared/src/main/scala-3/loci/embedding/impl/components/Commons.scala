@@ -71,6 +71,7 @@ trait Commons:
     val single = TypeRepr.of[language.Single[?]].typeSymbol
     val optional = TypeRepr.of[language.Optional[?]].typeSymbol
     val multiple = TypeRepr.of[language.Multiple[?]].typeSymbol
+    val deferred = TypeRepr.of[language.deferred].typeSymbol
     val context = TypeRepr.of[Placement.Context.type].typeSymbol
     val multitierContext = TypeRepr.of[embedding.Multitier.Context.type].typeSymbol
     val subjectivity = TypeRepr.of[Subjectivity.type].typeSymbol
@@ -142,6 +143,7 @@ trait Commons:
     val targetName = TypeRepr.of[annotation.targetName].typeSymbol
     val asInstanceOf = '{ ?.asInstanceOf }.symbol
     val repeated = TypeRepr.of[`<repeated>`[?]].typeSymbol
+    val uninitialized = Symbol.requiredMethod("scala.compiletime.uninitialized")
     val `&` = Symbol.requiredPackage("scala").typeMember("&")
     val `|` = Symbol.requiredPackage("scala").typeMember("|")
 
@@ -196,6 +198,11 @@ trait Commons:
     val placed = s"${loci}placed$$"
     val marshalling = s"${loci}marshalling$$"
     val resolutionFailure = "resolutionFailure"
+    val placedValue = "placed"
+    val placedPrivateValue = "placed private"
+    val placedStatement = "placed statement"
+    val placedValues = "placed values"
+    val outerPlacedValues = "placed values"
 
   object Tuple extends TupleExtractor(quotes)
 
@@ -433,8 +440,9 @@ trait Commons:
 
   def isMultitierModule(symbol: Symbol): Boolean =
     symbol.exists && (symbol.isField || symbol.isModuleDef || symbol.isClassDef) && !symbol.isPackageDef &&
-    (symbol.info.baseClasses exists: symbol =>
-      symbol.hasAnnotation(symbols.`language.multitier`) || symbol.hasAnnotation(symbols.`embedding.multitier`))
+    (symbol.hasAnnotation(symbols.`language.multitier`) || symbol.hasAnnotation(symbols.`embedding.multitier`) ||
+      (symbol.info.baseClasses exists: symbol =>
+        symbol.hasAnnotation(symbols.`language.multitier`) || symbol.hasAnnotation(symbols.`embedding.multitier`)))
 
   def isMultitierNestedPath(symbol: Symbol): Boolean =
     symbol.exists && (isMultitierModule(symbol) || symbol.isModuleDef && isMultitierNestedPath(symbol.maybeOwner))

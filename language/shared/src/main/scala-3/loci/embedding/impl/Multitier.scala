@@ -24,6 +24,7 @@ object Multitier:
       NonPlacements,
       Peers,
       AccessPath,
+      Checking,
       PlacedTransformations,
       PlacedStatements,
       PlacedBlocks,
@@ -38,7 +39,9 @@ object Multitier:
     import processor.*
 
     val preprocessingPhases = List(
+      checkMultitierDefinitions,
       normalizePlacedStatements,
+      checkDeferredDefinitions,
       liftRemoteBlocks,
       eraseMultitierConstructs)
 
@@ -123,7 +126,9 @@ object Multitier:
       case _: ClassDef | _: ValDef if tree.symbol.owner hasAncestor isMultitierModule =>
         List(tree) ++ companion
 
-      case _: ClassDef =>
+      case tree: ClassDef =>
+        checkMultitierAnnotations(tree)
+
         object preprocessor extends Preprocessor
         val preprocessed = preprocessor.transformSubTrees(List(tree))(tree.symbol.owner).head
 

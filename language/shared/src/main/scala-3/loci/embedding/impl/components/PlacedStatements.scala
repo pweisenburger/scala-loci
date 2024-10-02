@@ -490,19 +490,7 @@ trait PlacedStatements:
         super.transform(tpe)
 
   def normalizePlacedStatements(module: ClassDef): ClassDef =
-    module.body foreach:
-      case stat @ TypeDef(_, _) if stat.symbol.hasAnnotation(symbols.peer) =>
-        PeerInfo.check(stat, shallow = true).left foreach errorAndCancel
-      case _ =>
-
-    if canceled then
-      disableErrorAndCancel()
-
     val body = module.body map:
-      case stat @ TypeDef(_, _) if stat.symbol.hasAnnotation(symbols.peer) =>
-        PeerInfo.check(stat).left foreach errorAndCancel
-        stat
-
       case stat @ ValDef(name, tpt, rhs) =>
         SingletonTypeChecker(stat).transform(tpt.tpe)
         placementType(stat, tpt).fold(cleanSpuriousPlacementSyntax(stat)): placementInfo =>

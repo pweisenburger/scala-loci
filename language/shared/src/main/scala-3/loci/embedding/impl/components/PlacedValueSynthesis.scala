@@ -19,7 +19,7 @@ trait PlacedValueSynthesis:
   import quotes.reflect.*
 
   case class SynthesizedPlacedValues(symbol: Symbol, module: Symbol, peer: Symbol, parents: List[TypeRepr])
-  case class SynthesizedDefinitions(original: Symbol, binding: Symbol, init: Option[Symbol], impls: List[Symbol])
+  case class SynthesizedDefinitions(original: Symbol, binding: Symbol, init: Option[Symbol], setter: Option[Symbol], impls: List[Symbol])
   case class SynthesizedStatements(binding: Symbol, impls: List[Symbol])
 
   private val synthesizedDefinitionsCache = PlacedValueSynthesis.synthesizedDefinitionsCache match
@@ -53,22 +53,17 @@ trait PlacedValueSynthesis:
 
     from.annotations foreach:
       case tree @ Apply(fun, List(arg @ Literal(IntConstant(count))))
-        if decrementContextResultCount &&
-           fun.symbol.isClassConstructor &&
-           fun.symbol.owner == symbols.contextResultCount =>
+          if fun.symbol.isClassConstructor && fun.symbol.owner == symbols.contextResultCount && decrementContextResultCount =>
         if count > 1 then
           updateSymbolAnnotationWithTree(to, Apply.copy(tree)(fun, List(Literal.copy(arg)(IntConstant(count - 1)))))
 
       case Apply(fun, List(arg @ Literal(StringConstant(message))))
-        if fun.symbol.isClassConstructor &&
-           fun.symbol.owner == symbols.compileTimeOnly &&
+        if fun.symbol.isClassConstructor && fun.symbol.owner == symbols.compileTimeOnly &&
            (message == MultitierPreprocessor.illegalPlacedValueAccessMessage ||
             message == MultitierPreprocessor.illegalObjectMemberAccessMessage) =>
 
       case Apply(fun, List(_))
-        if fun.symbol.isClassConstructor &&
-           fun.symbol.owner == symbols.targetName &&
-           !sameTargetName =>
+        if fun.symbol.isClassConstructor && fun.symbol.owner == symbols.targetName && !sameTargetName =>
 
       case tree =>
         updateSymbolAnnotationWithTree(to, tree)
@@ -163,27 +158,28 @@ trait PlacedValueSynthesis:
   end multitierModuleTypeUnlifter
 
   private def synthesizedValOrDef(symbol: Symbol): SynthesizedDefinitions = synthesizedDefinitionsCache.getOrElse(symbol, {
-    val placedName = s"<placed ${symbol.name} of ${fullName(symbol.owner)}>"
-    val (universalName, info, peer) =
+    val placedName = s"<${names.placedValue} ${symbol.name} of ${fullName(symbol.owner)}>"
+
+    val potentialGetterName = if symbol.name endsWith "_=" then symbol.name.dropRight(2) else ""
+    val potentialGetter = if potentialGetterName.nonEmpty then symbol.owner.declaredField(potentialGetterName) else Symbol.noSymbol
+
+    val (universalName, info, peer, getter) =
       symbol.info match
-        case MethodType(List(paramName), List(paramType), resultType)
-          if resultType.typeSymbol == defn.UnitClass &&
-             symbol.isFieldAccessor &&
-             (symbol.name endsWith "_=") =>
+        case MethodType(List(paramName), List(paramType), resultType) if resultType.typeSymbol == defn.UnitClass && potentialGetter.exists =>
           val name =
             if symbol.flags is Flags.Private then
-              s"<placed private ${symbol.name.dropRight(2)} of ${fullName(symbol.owner)}>_="
+              s"<${names.placedPrivateValue} $potentialGetterName of ${fullName(symbol.owner)}>_="
             else
               symbol.name
           val (info, _) = erasePlacementAndNonPlacementType(paramType)
-          (name, MethodType(List(paramName))(_ => List(info), _ => resultType), defn.AnyClass)
+          (name, MethodType(List(paramName))(_ => List(info), _ => resultType), defn.AnyClass, potentialGetter)
         case tpe =>
           if isMultitierModule(symbol) then
-            (symbol.name, multitierModuleTypeUnlifter.transform(tpe), defn.AnyClass)
+            (symbol.name, multitierModuleTypeUnlifter.transform(tpe), defn.AnyClass, Symbol.noSymbol)
           else
-            val name = if symbol.flags is Flags.Private then s"<placed private ${symbol.name} of ${fullName(symbol.owner)}>" else symbol.name
+            val name = if symbol.flags is Flags.Private then s"<${names.placedPrivateValue} ${symbol.name} of ${fullName(symbol.owner)}>" else symbol.name
             val (info, peer) = erasePlacementAndNonPlacementType(symbol.info)
-            (name, if hasSyntheticMultitierContextArgument(symbol) then dropLastArgumentList(info) else info, peer)
+            (name, if hasSyntheticMultitierContextArgument(symbol) then dropLastArgumentList(info) else info, peer, Symbol.noSymbol)
 
     val peers =
       val rhs = symbolTree(symbol) collect:
@@ -215,6 +211,28 @@ trait PlacedValueSynthesis:
         copyAnnotations(symbol, universal, decrementContextResultCount, sameTargetName = true)
         universal
 
+      // try to improve error message by pretending abstract overriding symbol has the same type as a concrete overridden symbol
+      // (note that eventually the overriding symbol will become the overridden one in this case, and vice versa)
+      if symbol.flags is Flags.Deferred then
+        val allOverriddenSymbols = universal.allOverriddenSymbols
+        while allOverriddenSymbols.hasNext do
+          val overridden = allOverriddenSymbols.next()
+          val overridenInfo = universalValues.typeRef.memberType(overridden)
+          if !(overridden.flags is Flags.Deferred) && !(info =:= overridenInfo) then
+            SymbolMutator.get foreach:
+              _.setInfo(universal, universal.info.withResultType(overridenInfo.resultType))
+
+      val setter =
+        if (symbol.flags is Flags.Mutable | Flags.PrivateLocal) &&
+           symbol.isField &&
+           !symbol.isFieldAccessor &&
+           !symbol.setter.exists then
+          val setterInfo = MethodType(List("x$1"))(_ => List(info), _ => TypeRepr.of[Unit])
+          val setterFlags = if flags is Flags.Synthetic then Flags.Synthetic else Flags.EmptyFlags
+          Some(newMethod(universalValues, s"${universalName}_=", setterInfo, setterFlags | Flags.FieldAccessor | Flags.Method | Flags.Mutable, Symbol.noSymbol))
+        else
+          None
+
       val definition =
         if !universalOnly then
           if symbol.isMethod then
@@ -223,7 +241,7 @@ trait PlacedValueSynthesis:
                 val placed = newMethod(placedValues, universalName, info, flags | Flags.Synthetic | Flags.Override, Symbol.noSymbol)
                 copyAnnotations(symbol, placed, decrementContextResultCount, sameTargetName = true)
                 placed
-            SynthesizedDefinitions(symbol, universal, None, impls)
+            SynthesizedDefinitions(symbol, universal, None, setter, impls)
           else
             val methodType = MethodType(List.empty)(_ => List.empty, _ => info)
 
@@ -236,9 +254,9 @@ trait PlacedValueSynthesis:
                 copyAnnotations(symbol, placedInit, decrementContextResultCount, sameTargetName = false)
                 placedInit
 
-            SynthesizedDefinitions(symbol, universal, Some(universalInit), implsInit)
+            SynthesizedDefinitions(symbol, universal, Some(universalInit), setter, implsInit)
         else
-          SynthesizedDefinitions(symbol, universal, None, List.empty)
+          SynthesizedDefinitions(symbol, universal, None, setter, List.empty)
       end definition
 
       synthesizedDefinitionsCache += symbol -> definition
@@ -258,7 +276,7 @@ trait PlacedValueSynthesis:
         if symbol.flags is Flags.Lazy then Flags.Lazy else Flags.EmptyFlags
       val binding = ownerPlacedValues.declaredField(module.companionModule.name) orElse:
         newVal(ownerPlacedValues, module.companionModule.name, modulePlacedValues.typeRef, flags | Flags.Deferred, Symbol.noSymbol)
-      val definition = SynthesizedDefinitions(module, binding, None, List.empty)
+      val definition = SynthesizedDefinitions(module, binding, None, None, List.empty)
 
       if module.isModuleDef then
         synthesizedDefinitionsCache += module.companionModule -> definition
@@ -287,7 +305,7 @@ trait PlacedValueSynthesis:
   def synthesizedStatement(module: Symbol, peer: Symbol, index: Int): Option[SynthesizedStatements] =
     synthesizedStatementsCache.getOrElse((module, peer, index), {
       if peer != defn.AnyClass then
-        val name = s"<placed statement ${index} of ${fullName(peer)}>"
+        val name = s"<${names.placedStatement} $index of ${fullName(peer)}>"
         val universalValues = synthesizedPlacedValues(module, defn.AnyClass).symbol
         val placedValues = synthesizedPlacedValues(module, peer).symbol
         val unaryProcedureType = MethodType(List.empty)(_ => List.empty, _ => TypeRepr.of[Unit])
@@ -348,7 +366,7 @@ trait PlacedValueSynthesis:
       synthesizedPlacedValuesCache.getOrElse((module, peer), {
         val symbol = syntheticTrait(
           module,
-          if peer == defn.AnyClass then s"<placed values of $form $name>" else s"<placed values on $name$separator${peer.name}>",
+          if peer == defn.AnyClass then s"<${names.placedValues} of $form $name>" else s"<${names.placedValues} on $name$separator${peer.name}>",
           if peer == defn.AnyClass then mangledName else s"$mangledName$$${peer.name}",
           parents,
           noInits = peer != defn.AnyClass): symbol =>
@@ -368,8 +386,9 @@ trait PlacedValueSynthesis:
                 case Some(ClassDef(_, _, _, _, body)) =>
                   body flatMap:
                     case stat: Definition if synthesizeMember(stat.symbol) =>
-                      synthesizedDefinitions(stat.symbol).fold(List.empty): definitions =>
-                        collectDeclarations(definitions.binding :: definitions.init.toList ++ definitions.impls)
+                      synthesizedDefinitions(stat.symbol).fold(List.empty):
+                        case SynthesizedDefinitions(_, binding, init, setter, impls) =>
+                          collectDeclarations(binding :: init.toList ++ setter.toList ++ impls)
                     case statement: Term =>
                       val statementPeer = PlacementInfo(statement.tpe.resultType).fold(defn.AnyClass) { _.peerType.typeSymbol }
                       if peer == defn.AnyClass || peer == statementPeer then
@@ -388,8 +407,9 @@ trait PlacedValueSynthesis:
               if declarations.isEmpty then
                 module.declarations flatMap: decl =>
                   if synthesizeMember(decl) then
-                    synthesizedDefinitions(decl).fold(List.empty): definitions =>
-                      collectDeclarations(definitions.binding :: definitions.init.toList ++ definitions.impls)
+                    synthesizedDefinitions(decl).fold(List.empty):
+                      case SynthesizedDefinitions(_, binding, init, setter, impls) =>
+                        collectDeclarations(binding :: init.toList ++ setter.toList ++ impls)
                   else
                     List.empty
               else
@@ -399,15 +419,15 @@ trait PlacedValueSynthesis:
                (module.owner hasAncestor isMultitierModule) &&
                (parents forall { _.typeSymbol.maybeOwner.maybeOwner != symbol.maybeOwner.maybeOwner }) then
               val placedValues = synthesizedPlacedValues(module.owner, defn.AnyClass).symbol
-              val name = s"<outer placed values of ${implementationForm(module.owner)} ${fullName(module.owner)}>"
+              val name = s"<${names.outerPlacedValues} of ${implementationForm(module.owner)} ${fullName(module.owner)}>"
               newVal(symbol, name, placedValues.typeRef, Flags.ParamAccessor, Symbol.noSymbol) :: decls
             else
               decls
         end symbol
 
-        val (names, tpes) = (symbol.declaredFields collect { case symbol if symbol.isParamAccessor => symbol.name -> symbol.info }).unzip
-        if names.nonEmpty then
-          val tpe = MethodType(names)(_ => tpes, _ => symbol.typeRef)
+        val (paramNames, paramTypes) = (symbol.declaredFields collect { case symbol if symbol.isParamAccessor => symbol.name -> symbol.info }).unzip
+        if paramNames.nonEmpty then
+          val tpe = MethodType(paramNames)(_ => paramTypes, _ => symbol.typeRef)
           SymbolMutator.getOrErrorAndAbort.setInfo(symbol.primaryConstructor, tpe)
 
         SynthesizedPlacedValues(symbol, module, peer, parents)

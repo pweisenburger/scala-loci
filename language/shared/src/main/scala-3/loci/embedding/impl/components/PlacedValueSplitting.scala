@@ -88,19 +88,25 @@ trait PlacedValueSplitting:
           val rhss =
             if stat.symbol.flags is Flags.Deferred then
               Map(defn.AnyClass -> None)
+            else if definitions.binding.hasAnnotation(symbols.deferred) || definitions.binding.getter.hasAnnotation(symbols.deferred) then
+              Map.empty
             else
               rhssByPeers(stat)
 
           val bodiesWithBinding = definitions match
-            case SynthesizedDefinitions(_, binding, None, _) =>
+            case SynthesizedDefinitions(_, binding, None, _, _) =>
               bodies.prepended(binding.owner)(synthesizePlacedDefinition(binding, stat, module.symbol, rhss))
-            case SynthesizedDefinitions(_, binding, Some(init), _) =>
+            case SynthesizedDefinitions(_, binding, Some(init), _, _) =>
               bodies.prepended(binding.owner)(ValDef(binding, Some(Ref(init).appliedToNone)))
                 .prepended(init.owner)(synthesizePlacedDefinition(init, stat, module.symbol, rhss))
-            case _ =>
-              bodies
 
-          definitions.impls.foldLeft(bodiesWithBinding): (bodies, impl) =>
+          val bodiesWithBindingAndSetter = definitions match
+            case SynthesizedDefinitions(_, _, _, Some(setter), _) =>
+              bodiesWithBinding.prepended(setter.owner)(DefDef(setter, _ => Some(Literal(UnitConstant()))))
+            case _ =>
+              bodiesWithBinding
+
+          definitions.impls.foldLeft(bodiesWithBindingAndSetter): (bodies, impl) =>
             bodies.prepended(impl.owner)(synthesizePlacedDefinition(impl, stat, module.symbol, rhss))
 
       case (bodies, stat: ClassDef) if synthesizeMember(stat.symbol) =>
@@ -152,14 +158,20 @@ trait PlacedValueSplitting:
       ClassDef.copy(classDef)(classDef.name, DefDef(classDef.constructor.symbol, _ => None), classDef.parents, classDef.self, classDef.body)
 
     def eraseBody(stat: Definition, term: Term) =
-      transformBody(term, stat.symbol): (expr, owners) =>
-        erasedBody(owners.foldLeft(expr.tpe) { _.substituteParamRefsByTermRefs(_) })(owners.head)
+      transformBody(term, stat.symbol.info.resultType, stat.symbol): (_, tpe, owners) =>
+        erasedBody(owners.foldLeft(tpe) { _.substituteParamRefsByTermRefs(_) })(owners.head)
 
     val body = module.body flatMap:
       case stat @ ValDef(name, tpt, rhs) if !stat.symbol.isModuleDef =>
         Some(ValDef.copy(stat)(name, tpt, rhs map { eraseBody(stat, _) }))
-      case stat @ DefDef(name, paramss, tpt, rhs) if !stat.symbol.isFieldAccessor =>
-        Some(DefDef.copy(stat)(name, paramss, tpt, rhs map { eraseBody(stat, _) }))
+      case stat @ DefDef(name, paramss, tpt, rhs) =>
+        if stat.symbol.isFieldAccessor then
+          if stat.symbol.getter.hasAnnotation(symbols.deferred) then
+            Some(DefDef.copy(stat)(name, paramss, tpt, rhs map { _ => Literal(UnitConstant()) }))
+          else
+            Some(stat)
+        else
+          Some(DefDef.copy(stat)(name, paramss, tpt, rhs map { eraseBody(stat, _) }))
       case stat: ClassDef if stat.symbol.isModuleDef && !isMultitierModule(stat.symbol) =>
         Some(split(stat))
       case stat: Definition =>

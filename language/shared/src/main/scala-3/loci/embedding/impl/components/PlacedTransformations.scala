@@ -13,15 +13,19 @@ trait PlacedTransformations:
   import quotes.reflect.*
 
   def transformBody(term: Term, owner: Symbol)(transform: (Term, List[Symbol]) => Term): Term =
-    def transformBody(term: Term, owners: List[Symbol]): Term = term match
-      case block @ Lambda(arg :: _, expr) if arg.symbol.isImplicit =>
+    transformBody(term, term.tpe, owner): (term, _, owners) =>
+      transform(term, owners)
+
+  def transformBody(term: Term, tpe: TypeRepr, owner: Symbol)(transform: (Term, TypeRepr, List[Symbol]) => Term): Term =
+    def transformBody(term: Term, tpe: TypeRepr, owners: List[Symbol]): Term = term match
+      case block @ Lambda(arg :: _, expr) if arg.symbol.isImplicit && tpe.isContextFunctionType && tpe.typeArgs.nonEmpty =>
         val Block(List(lambda: DefDef), closure) = block: @unchecked
-        val rhs = transformBody(expr, lambda.symbol :: owners)
+        val rhs = transformBody(expr, tpe.dealias.typeArgs.last, lambda.symbol :: owners)
         Block.copy(block)(List(DefDef.copy(lambda)(lambda.name, lambda.paramss, lambda.returnTpt, Some(rhs))), closure)
       case _ =>
-        transform(term, owners).changeOwner(owners.head)
+        transform(term, tpe, owners).changeOwner(owners.head)
 
-    transformBody(term, List(owner))
+    transformBody(term, tpe, List(owner))
   end transformBody
 
   private enum Processing[Result]:

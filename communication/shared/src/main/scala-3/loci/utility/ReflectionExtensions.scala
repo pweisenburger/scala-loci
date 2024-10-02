@@ -61,6 +61,35 @@ object reflectionExtensions:
       (symbol.flags is quotes.reflect.Flags.Module) &&
       (symbol.name == "package" || (symbol.name endsWith "$package") ||
        symbol.name == "package$" || (symbol.name endsWith "$package$"))
+
+    @experimental
+    def getter =
+      import quotes.reflect.*
+
+      symbol.info match
+        case MethodType(_, List(paramType), resultType)
+            if resultType.typeSymbol == defn.UnitClass &&
+               symbol.isFieldAccessor && (symbol.flags is Flags.Mutable) &&
+               symbol.name.length > 2 && (symbol.name endsWith "_=") =>
+          val getter = symbol.owner.declaredField(symbol.name.dropRight(2))
+          if getter.info =:= paramType then getter else Symbol.noSymbol
+        case _ =>
+          Symbol.noSymbol
+    end getter
+
+    @experimental
+    def setter =
+      import quotes.reflect.*
+
+      if symbol.isField && (symbol.flags is Flags.Mutable) then
+        val setter = symbol.owner.declaredMethod(s"${symbol.name}_=") find:
+          _.info match
+            case MethodType(_, List(paramType), resultType) => paramType =:= symbol.info && resultType.typeSymbol == defn.UnitClass
+            case _ => false
+        setter getOrElse Symbol.noSymbol
+      else
+        Symbol.noSymbol
+    end setter
   end extension
 
   extension (using Quotes)(flags: quotes.reflect.Flags)
