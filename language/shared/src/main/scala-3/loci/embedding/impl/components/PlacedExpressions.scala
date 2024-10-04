@@ -262,15 +262,25 @@ trait PlacedExpressions:
       case _ =>
         termAsSelection(term, owner) match
           // check other placed value accesses
-          case Some(select) if !checkOnly =>
-            PlacementInfo(select.qualifier.tpe.widenTermRefByName.resultType).fold(super.transformTerm(term)(owner)): placementInfo =>
-              val qualifier = transformTerm(select.qualifier)(owner)
-              val tpe = if placementInfo.modality.subjective then TypeRepr.of[Unit] else placementInfo.valueType
-              if !canceled && !placementInfo.canonical && !(tpe.baseClasses contains select.symbol.owner) then
-                errorAndCancel(s"${select.symbol} is not a member of ${prettyType(tpe.prettyShow)}", select.posInUserCode)
-                select
-              else
-                Select.copy(select)(qualifier, select.name)
+          case Some(select) =>
+            val tpe = select.qualifier.tpe.widenTermRefByName.resultType
+            PlacementInfo(tpe) match
+              case Some(placementInfo) =>
+                if !checkOnly then
+                  val qualifier = transformTerm(select.qualifier)(owner)
+                  val tpe = if placementInfo.modality.subjective then TypeRepr.of[Unit] else placementInfo.valueType
+                  if !canceled && !placementInfo.canonical && !(tpe.baseClasses contains select.symbol.owner) then
+                    errorAndCancel(s"${select.symbol} is not a member of ${prettyType(tpe.prettyShow)}", select.posInUserCode.lastCodeLine)
+                    select
+                  else
+                    Select.copy(select)(qualifier, select.name)
+                else
+                  errorAndCancel("Expression must be placed on a peer.", term.posInUserCode.firstCodeLine)
+                  super.transformTerm(term)(owner)
+              case _ =>
+                if checkOnly && NonPlacementInfo(tpe).isDefined then
+                  errorAndCancel("Expression can only be used in a multitier module.", term.posInUserCode.firstCodeLine)
+                super.transformTerm(term)(owner)
 
           case _ => term match
             // check type of identifiers

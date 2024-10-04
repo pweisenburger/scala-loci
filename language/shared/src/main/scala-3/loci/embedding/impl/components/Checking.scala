@@ -9,7 +9,7 @@ import scala.annotation.experimental
 
 @experimental
 trait Checking:
-  this: Component & Commons & ErrorReporter & Placements & Peers =>
+  this: Component & Commons & ErrorReporter & Placements & NonPlacements & Peers =>
   import quotes.reflect.*
 
   private inline def treeType(tree: Tree) = tree match
@@ -30,36 +30,71 @@ trait Checking:
            symbol != defn.MatchableClass &&
            !isMultitierModule(symbol) &&
            (!(symbol.flags is Flags.NoInits) || symbol.declaredFields.nonEmpty || symbol.declaredMethods.nonEmpty) then
-          errorAndCancel("Multitier modules cannot extend non-multitier modules.", base.posInUserCode)
+          errorAndCancel(s"Multitier modules cannot extend non-multitier modules: ${prettyType(symbol.typeRef.prettyShow)}", base.posInUserCode)
   end checkMultitierBaseTypes
+
+  private object NestedApplies:
+    def unapply(term: Term): Some[Term] = term match
+      case Apply(NestedApplies(fun), _) => Some(fun)
+      case _ => Some(term)
 
   private object multitierDefinitionsChecker extends TreeTraverser:
     override def traverseTree(tree: Tree)(owner: Symbol) =
       tree match
-        case ValDef(_, tpt, _) if isMultitierModule(tree.symbol) && !tree.symbol.isModuleDef =>
-          if tree.symbol.isAbstract || tree.symbol.hasAnnotation(symbols.deferred) then
-            def flatten(tpt: Tree): Option[List[Tree]] = tpt match
-              case Applied(andType, List(left, right)) if andType.symbol == symbols.`&` =>
-                flatten(left) flatMap { left => flatten(right) map { left ++ _ } }
-              case Applied(TypeIdent(_) | TypeSelect(_, _), _) | TypeIdent(_) | TypeSelect(_, _) =>
-                Some(List(tpt))
-              case _ =>
-                errorAndCancel("Unexpected type for multitier module.", tpt.posInUserCode)
-                None
-
-            flatten(tpt) foreach: bases =>
-              checkMultitierBaseTypes(bases)
-              if bases forall { base => !isMultitierModule(treeType(base).typeSymbol) } then
-                errorAndCancel("Type is not a multitier module.", tpt.posInUserCode)
-          else if tree.symbol.owner.isFieldAccessor || (tree.symbol.flags is Flags.Mutable) then
+        case ValDef(_, tpt, rhs) if isMultitierModule(tree.symbol) && !tree.symbol.isModuleDef =>
+          if tree.symbol.flags is Flags.Mutable then
             errorAndCancel("Multitier modules cannot be mutable variables.", tree.posInUserCode.firstCodeLine)
           else if tree.symbol.isParam then
             errorAndCancel("Multitier modules cannot be passed as parameters.", tree.posInUserCode.firstCodeLine)
           else
-            errorAndCancel("The implementation of a multitier module must be an `object`.", tree.posInUserCode.firstCodeLine)
+            val bases = tpt match
+              case Inferred() =>
+                List(tpt)
+              case _=>
+                def flatten(tpt: Tree): Option[List[Tree]] = tpt match
+                  case Applied(andType, List(left, right)) if andType.symbol == symbols.`&` =>
+                    flatten(left) flatMap { left => flatten(right) map { left ++ _ } }
+                  case Applied(TypeIdent(_) | TypeSelect(_, _), _) | TypeIdent(_) | TypeSelect(_, _) =>
+                    Some(List(tpt))
+                  case _ =>
+                    errorAndCancel("Unexpected type for multitier module.", tpt.posInUserCode)
+                    None
+                flatten(tpt).toList.flatten
+
+            checkMultitierBaseTypes(bases)
+            if bases forall { base => !isMultitierModule(treeType(base).typeSymbol) } then
+              errorAndCancel("Type is not a multitier module.", tpt.posInUserCode)
+
+            rhs match
+              case _ if tree.symbol.hasAnnotation(symbols.deferred) =>
+              case None =>
+              case Some(rhs @ NestedApplies(Select(New(_), _))) if rhs.tpe.typeSymbol.flags is Flags.Final =>
+                if !isMultitierModule(tree.symbol.owner) then
+                  errorAndCancel(
+                    "The implementation of a multitier module must be an `object`.",
+                    tree.posInUserCode.firstCodeLine)
+              case _ =>
+                errorAndCancel(
+                  "The implementation of a multitier module must be an `object` or the instantiation of a final class.",
+                  tree.posInUserCode.firstCodeLine)
 
         case ValDef(_, tpt, _) if tree.symbol.isParam && !tree.symbol.owner.isFieldAccessor && PlacementInfo(tpt.tpe.widenByName).isDefined =>
           errorAndCancel("Placed values cannot be passed as parameters.", tree.posInUserCode.firstCodeLine)
+
+        case ValDef(name, tpt, _) if tree.symbol.isField =>
+          NonPlacementInfo(tpt.tpe.widenTermRefByName) foreach: nonPlacementInfo =>
+            if nonPlacementInfo.valueType.baseClasses exists isMultitierModule then
+              val annotateMessage =
+                s"\nTry annotating the value explicitly: ${prettyAnnotation("@multitier")} ${prettyKeyword("val")} $name"
+              val ascribeMessage = tpt match
+                case Inferred() => s"\nAnd/or try ascribing the type explicitly: ${prettyKeyword("val")} $name: ${prettyType(nonPlacementInfo.valueType.prettyShow)}"
+                case _ => ""
+              errorAndCancel(s"Value was not inferred as multitier module.$annotateMessage$ascribeMessage", tree.posInUserCode.firstCodeLine)
+
+        case DefDef(name, _, tpt, _) =>
+          val tpe = NonPlacementInfo(tpt.tpe.widenTermRefByName).fold(tpt.tpe) { _.valueType }
+          if tpe.baseClasses exists isMultitierModule then
+            errorAndCancel(s"Multitier modules must be stable values: ${prettyKeyword("val")} $name", tree.posInUserCode.firstCodeLine)
 
         case _ =>
 
@@ -166,7 +201,7 @@ trait Checking:
             if uninitialized.symbol == symbols.uninitialized && (erased.symbol == symbols.erased || erased.symbol == symbols.erasedArgs) =>
           case rhs =>
             errorAndCancel(
-              s"Definitions with ${prettyAnnotation("@deferred")} annotation must be initialized with `scala.compiletime.uninitialized`.",
+              s"Definitions with ${prettyAnnotation("@deferred")} annotation in final classes or objects must be initialized with `scala.compiletime.uninitialized`.",
               stat.posInUserCode.firstCodeLine)
 
     module

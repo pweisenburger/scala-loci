@@ -111,6 +111,7 @@ object MultitierPreprocessor:
         val resetFlag = symDenotationClass.getMethod("resetFlag", classOf[Long])
         val annotationSymbol = annotationClass.getMethod("symbol", contextClass)
         val wildcardType = wildcardTypeClass.getField("MODULE$")
+        val typedExpr = typerClass.getMethod("typedExpr", treeClass, typeClass, contextClass)
         val typedType = typerClass.getMethod("typedType", treeClass, typeClass, classOf[Boolean], contextClass)
         val original = completerClass.getMethod("original")
         val contains = sourcePositionClass.getMethod("contains", sourcePositionClass)
@@ -180,6 +181,12 @@ object MultitierPreprocessor:
           def unapply(tree: Any): Option[Tree] = tree match
             case tree: Tree @unchecked if treeClass.isInstance(tree) => Some(tree)
             case _ => None
+
+        def tryTypingTerm(term: Term) =
+          noReporting(context)(null, useExploringContext = false): context =>
+            typedExpr.invoke(contextTyper, term, wildcardType.get(null), context) match
+              case QuotesTree(term: Term) => Some(term)
+              case _ => None
 
         def tryTypingTypeTree(tpt: TypeTree) =
           noReporting(context)(null, useExploringContext = false): context =>
@@ -384,25 +391,38 @@ object MultitierPreprocessor:
             if valOrDefDefClass.isInstance(tree) && !(flags(tree) is Flags.ParamAccessor) && !(flags(tree) is Flags.Inline) then
               val rhs = unforcedRhs.invoke(tree)
 
-              val hasNoParams =
+              val hasParams =
                 if defDefClass.isInstance(tree) then
                   try
                     paramss.setAccessible(true)
                     paramss.get(tree) match
-                      case paramss: List[?] => paramss.isEmpty
-                      case _ => false
+                      case paramss: List[?] => paramss.nonEmpty
+                      case _ => true
                   catch
-                    case NonFatal(_) => false
+                    case NonFatal(_) => true
                 else
-                  valDefClass.isInstance(tree)
+                  !valDefClass.isInstance(tree)
 
               val untypedTpt = valOrDefTpt.invoke(tree)
               val maybeTypedTpt = untypedTpt match
                 // The `tpt` of a `val` or a `def` is always a `TypeTree`,
-                // i.e., `isType` is true and they are no type bounds
-                case tpt: TypeTree @unchecked if hasNoParams || maybeRelatedPlacementTypeTree(tpt) => tryTypingTypeTree(tpt)
+                // i.e., `isType` is true and they are not type bounds
+                case tpt: TypeTree @unchecked if !hasParams || maybeRelatedPlacementTypeTree(tpt) => tryTypingTypeTree(tpt)
                 case _ => None
               val typedTpt = maybeTypedTpt getOrElse Singleton(Literal(NullConstant()))
+
+              def maybeInstantiation(term: Term): Boolean = term match
+                case Apply(fun, _) => maybeInstantiation(fun)
+                case Select(qualifier, _) => maybeInstantiation(qualifier)
+                case Ident(_) | New(_) => true
+                case _ => false
+
+              def rhsInstantiationTypeIfDeficientTpt =
+                val maybeTypedTerm = rhs match
+                  // The `rhs` of a `val` or a `def` is always a `Term`
+                  case rhs: Term @unchecked if (maybeTypedTpt forall { tpt => !correctlyTyped(tpt.tpe) }) && maybeInstantiation(rhs) => tryTypingTerm(rhs)
+                  case _ => None
+                maybeTypedTerm.fold(ConstantType(NullConstant())) { _.tpe }
 
               val hasPlacementType = placementType(typedTpt.tpe)
               val hasNonPlacementType = nonPlacementType(typedTpt.tpe)
@@ -423,29 +443,35 @@ object MultitierPreprocessor:
 
               // adapt ascribed placement type of from `Nothing on P` to `Nothing of P on P` and
               // adapt ascribed non-placement type of from `T` to `nonplaced type T` on parameterless values that are not multitier modules (if configured)
-              (untypedTpt, typedTpt.tpe) match
-                case (_, AppliedType(_, List(valueType, _)))
-                    if hasPlacementType && isNothing(valueType) && infixOpClass.isInstance(untypedTpt) =>
-                  mutateField(infixLeft, untypedTpt, of(List(left.invoke(untypedTpt), right.invoke(untypedTpt))))
-                case (QuotesTree(Applied(tpt, args @ List(_, _))), AppliedType(_, List(valueType, _)))
-                    if hasPlacementType && isNothing(valueType) =>
-                  mutateField(appliedTypeTreeArgs, untypedTpt, of(args) :: args.tail)
-                case (tpt, tpe) =>
-                  def isMultitierModule =
-                    hasAnnotationSymbol(tree, `language.multitier`) ||
-                    (tpe.baseClasses exists: symbol =>
-                      symbol.hasAnnotation(`language.multitier`) || symbol.hasAnnotation(`embedding.multitier`))
-                  if insertNonplacedReturnTypeForValuesWithoutParams &&
-                     multitierAnnottee &&
-                     !hasNonPlacementType &&
-                     !hasPlacementType &&
-                     hasNoParams &&
-                     isEmpty.invoke(tpt) == false &&
-                     !isMultitierModule then
-                    if valDefClass.isInstance(tree) then
-                      mutateField(valTpt, tree, nonplacedType(tpt))
-                    if defDefClass.isInstance(tree) then
-                      mutateField(defTpt, tree, nonplacedType(tpt))
+              val isMultitierModule =
+                (untypedTpt, typedTpt.tpe) match
+                  case (_, AppliedType(_, List(valueType, _)))
+                      if hasPlacementType && isNothing(valueType) && infixOpClass.isInstance(untypedTpt) =>
+                    mutateField(infixLeft, untypedTpt, of(List(left.invoke(untypedTpt), right.invoke(untypedTpt))))
+                    false
+                  case (QuotesTree(Applied(tpt, args @ List(_, _))), AppliedType(_, List(valueType, _)))
+                      if hasPlacementType && isNothing(valueType) =>
+                    mutateField(appliedTypeTreeArgs, untypedTpt, of(args) :: args.tail)
+                    false
+                  case (tpt, tpe) =>
+                    def isMultitierModule =
+                      hasAnnotationSymbol(tree, `language.multitier`) ||
+                      (tpe.baseClasses exists: symbol =>
+                        symbol.hasAnnotation(`language.multitier`) || symbol.hasAnnotation(`embedding.multitier`)) ||
+                      (rhsInstantiationTypeIfDeficientTpt.baseClasses exists: symbol =>
+                        symbol.hasAnnotation(`language.multitier`) || symbol.hasAnnotation(`embedding.multitier`))
+                    if insertNonplacedReturnTypeForValuesWithoutParams &&
+                       multitierAnnottee &&
+                       !hasNonPlacementType &&
+                       !hasPlacementType &&
+                       !hasParams &&
+                       isEmpty.invoke(tpt) == false &&
+                       !isMultitierModule then
+                      if valDefClass.isInstance(tree) then
+                        mutateField(valTpt, tree, nonplacedType(tpt))
+                      if defDefClass.isInstance(tree) then
+                        mutateField(defTpt, tree, nonplacedType(tpt))
+                    isMultitierModule
 
               if multitierAnnottee then
                 // allow abstract values in objects
@@ -459,7 +485,7 @@ object MultitierPreprocessor:
                     if defDefClass.isInstance(tree) then
                       mutateField(defRhs, tree, TypedSplice(Ref(uninitialized)))
 
-                else
+                else if hasNonPlacementType || hasPlacementType || hasParams || !isMultitierModule then
                   val positionSpan = span.invoke(tree)
 
                   // propagate types for placement compounds and rewrite infix `and` to standard method invocation (if configured)
@@ -666,6 +692,13 @@ object MultitierPreprocessor:
 
         def processDeclarations(decl: Any, nestedInMultitierAnnottee: Boolean): Unit =
           val multitierAnnottee = hasAnnotationSymbol(decl, `language.multitier`)
+
+          if multitierAnnottee then
+            decl match
+              case QuotesSymbol(symbol) if flags(decl) is Flags.Trait | Flags.NoInits =>
+                resetFlag.invoke(denot.invoke(symbol, context), Flags.NoInits)
+              case _ =>
+
           val compileTimeOnlyAnnotation =
             if !multitierAnnottee then
               Some(objectMemberCompileTimeOnlyAnnotation)

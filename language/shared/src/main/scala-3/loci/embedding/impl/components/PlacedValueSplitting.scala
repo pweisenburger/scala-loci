@@ -47,8 +47,12 @@ trait PlacedValueSplitting:
   end rhssByPeers
 
   private def synthesizePlacedDefinition(impl: Symbol, stat: Statement, module: Symbol, rhss: Map[Symbol, Option[Term]]): ValDef | DefDef =
-    val rhs = synthesizedPlacedValues(impl.owner) flatMap: placedValues =>
-      rhss.get(placedValues.peer)
+    val rhs =
+      if impl.flags is Flags.Deferred then
+        Some(None)
+      else
+        synthesizedPlacedValues(impl.owner) flatMap: placedValues =>
+          rhss.get(placedValues.peer)
 
     val tpe = impl.info.resultType.substituteParamRefsByTermRefs(impl)
 
@@ -163,7 +167,10 @@ trait PlacedValueSplitting:
 
     val body = module.body flatMap:
       case stat @ ValDef(name, tpt, rhs) if !stat.symbol.isModuleDef =>
-        Some(ValDef.copy(stat)(name, tpt, rhs map { eraseBody(stat, _) }))
+        if isMultitierModule(stat.symbol) && !stat.symbol.hasAnnotation(symbols.deferred) then
+          Some(stat)
+        else
+          Some(ValDef.copy(stat)(name, tpt, rhs map { eraseBody(stat, _) }))
       case stat @ DefDef(name, paramss, tpt, rhs) =>
         if stat.symbol.isFieldAccessor then
           if stat.symbol.getter.hasAnnotation(symbols.deferred) then

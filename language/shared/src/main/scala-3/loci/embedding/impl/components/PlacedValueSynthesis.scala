@@ -65,6 +65,9 @@ trait PlacedValueSynthesis:
       case Apply(fun, List(_))
         if fun.symbol.isClassConstructor && fun.symbol.owner == symbols.targetName && !sameTargetName =>
 
+      case Apply(fun, List())
+        if fun.symbol.isClassConstructor && fun.symbol.owner == symbols.deferred && (to.flags is Flags.Deferred) =>
+
       case tree =>
         updateSymbolAnnotationWithTree(to, tree)
   end copyAnnotations
@@ -85,7 +88,7 @@ trait PlacedValueSynthesis:
           case _ =>
             info -> defn.AnyClass
 
-  private object multitierModuleTypeUnlifter extends TypeMap(quotes):
+  private class MultitierModuleTypeUnlifter(base: Option[TypeRepr]) extends TypeMap(quotes):
     private var nestedInAugmentation = false
     private var underlyingSymbolToUnlift = Option.empty[Symbol]
 
@@ -102,7 +105,9 @@ trait PlacedValueSynthesis:
         tpe
       else
         underlyingSymbolToUnlift = None
-        tpe.select(synthesizedPlacedValues(symbol, defn.AnyClass).symbol)
+        base match
+          case Some(base) if base <:< tpe => base.select(synthesizedPlacedValues(symbol, defn.AnyClass).symbol)
+          case _ => tpe.select(synthesizedPlacedValues(symbol, defn.AnyClass).symbol)
 
     private inline def preserve(tpe: TypeRepr) =
       underlyingSymbolToUnlift = None
@@ -142,6 +147,14 @@ trait PlacedValueSynthesis:
       case tpe: TypeLambda =>
         val typeLambda = TypeLambda(tpe.paramNames, _ => tpe.paramBounds, _ => inNestedAugmentation(true) { transform(tpe.resType) })
         if typeLambda != tpe then typeLambda else tpe
+      case AndType(left, right) =>
+        def lift(tpe: TypeRepr) =
+          if tpe.baseClasses exists isMultitierModule then inNestedAugmentation(false) { transform(tpe) } else defn.AnyClass.typeRef
+        val leftLifted = lift(left)
+        val rigthLifted = lift(right)
+        if leftLifted.typeSymbol == defn.AnyClass then rigthLifted
+        else if rigthLifted.typeSymbol == defn.AnyClass then leftLifted
+        else AndType(leftLifted, rigthLifted)
       case _ =>
         val dealiased = dealiasUpperBounds(tpe)
         val result = dealiased match
@@ -155,9 +168,10 @@ trait PlacedValueSynthesis:
             preserve(tpe)
         else
           preserve(result)
-  end multitierModuleTypeUnlifter
+  end MultitierModuleTypeUnlifter
 
   private def synthesizedValOrDef(symbol: Symbol): SynthesizedDefinitions = synthesizedDefinitionsCache.getOrElse(symbol, {
+    val multitierModule = isMultitierModule(symbol)
     val placedName = s"<${names.placedValue} ${symbol.name} of ${fullName(symbol.owner)}>"
 
     val potentialGetterName = if symbol.name endsWith "_=" then symbol.name.dropRight(2) else ""
@@ -174,7 +188,8 @@ trait PlacedValueSynthesis:
           val (info, _) = erasePlacementAndNonPlacementType(paramType)
           (name, MethodType(List(paramName))(_ => List(info), _ => resultType), defn.AnyClass, potentialGetter)
         case tpe =>
-          if isMultitierModule(symbol) then
+          if multitierModule then
+            val multitierModuleTypeUnlifter = MultitierModuleTypeUnlifter(Some(symbol.termRef))
             (symbol.name, multitierModuleTypeUnlifter.transform(tpe), defn.AnyClass, Symbol.noSymbol)
           else
             val name = if symbol.flags is Flags.Private then s"<${names.placedPrivateValue} ${symbol.name} of ${fullName(symbol.owner)}>" else symbol.name
@@ -202,9 +217,12 @@ trait PlacedValueSynthesis:
     val placedValues = peers map { synthesizedPlacedValues(symbol.owner, _).symbol }
 
     synthesizedDefinitionsCache.getOrElse(symbol, {
-      val universalOnly = peer == defn.AnyClass && peers.sizeIs == 1 || (symbol.flags is Flags.Deferred)
-      val flags = if universalOnly then symbol.flags else symbol.flags &~ Flags.PrivateLocal
       val decrementContextResultCount = info != symbol.info
+      val universalOnly = peer == defn.AnyClass && peers.sizeIs == 1 || (symbol.flags is Flags.Deferred) || multitierModule
+      val flags =
+        if multitierModule then symbol.flags | Flags.Deferred
+        else if universalOnly then symbol.flags
+        else symbol.flags &~ Flags.PrivateLocal
 
       val universal = universalValues.declaredField(universalName) orElse:
         val universal = newVal(universalValues, universalName, info, flags, Symbol.noSymbol)

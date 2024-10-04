@@ -67,6 +67,17 @@ trait RemoteAccessorSynthesis:
     (signature, ties)
   })
 
+  private val PureInterfaceFlag =
+    try
+      val flagsClass = Class.forName("dotty.tools.dotc.core.Flags$")
+      val flags = flagsClass.getField("MODULE$")
+      val pureInterface = flagsClass.getMethod("PureInterface")
+      pureInterface.invoke(flags.get(null)) match
+        case pureInterface: Flags @unchecked if Flags.EmptyFlags.getClass.isInstance(pureInterface) => Some(pureInterface)
+        case _ => None
+    catch
+      case NonFatal(_) => None
+
   private def encodeName(name: String) = name flatMap:
     case '~' => "$tilde"
     case '=' => "$eq"
@@ -1083,7 +1094,6 @@ trait RemoteAccessorSynthesis:
               val symbol = newVal(module, name, info, Flags.Final | Flags.Protected, Symbol.noSymbol)
 
               SymbolMutator.getOrErrorAndAbort.enter(module, symbol)
-              SymbolMutator.getOrErrorAndAbort.resetFlag(module, Flags.NoInits)
 
               inline def reference(symbol: Symbol) =
                 if symbol.owner == types.marshallable.typeSymbol.companionModule.moduleClass then
@@ -1184,6 +1194,10 @@ trait RemoteAccessorSynthesis:
         transmittable.marshallable flatMap: (_, marshallable) =>
           Option.unless(marshallables contains marshallable.symbol):
             (marshallable.symbol, Some(marshallable))
+
+    SymbolMutator.getOrErrorAndAbort.resetFlag(module, Flags.NoInits)
+    PureInterfaceFlag foreach: PureInterfaceFlag =>
+      SymbolMutator.getOrErrorAndAbort.resetFlag(module, PureInterfaceFlag)
 
     Accessors(identifier, signature, peers, overriding, marshalling, placed)
   end synthesizeAccessorsFromTree
