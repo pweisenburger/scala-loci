@@ -229,17 +229,6 @@ trait PlacedValueSynthesis:
         copyAnnotations(symbol, universal, decrementContextResultCount, sameTargetName = true)
         universal
 
-      // try to improve error message by pretending abstract overriding symbol has the same type as a concrete overridden symbol
-      // (note that eventually the overriding symbol will become the overridden one in this case, and vice versa)
-      if symbol.flags is Flags.Deferred then
-        val allOverriddenSymbols = universal.allOverriddenSymbols
-        while allOverriddenSymbols.hasNext do
-          val overridden = allOverriddenSymbols.next()
-          val overridenInfo = universalValues.typeRef.memberType(overridden)
-          if !(overridden.flags is Flags.Deferred) && !(info =:= overridenInfo) then
-            SymbolMutator.get foreach:
-              _.setInfo(universal, universal.info.withResultType(overridenInfo.resultType))
-
       val setter =
         if (symbol.flags is Flags.Mutable | Flags.PrivateLocal) &&
            symbol.isField &&

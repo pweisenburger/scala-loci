@@ -11,7 +11,7 @@ trait ErrorReporter:
   import quotes.reflect.*
 
   private var enabled = true
-
+  private var erroneous = false
   private var errors = List.empty[(String, Position)]
 
   private def reporting  =
@@ -33,7 +33,9 @@ trait ErrorReporter:
     else
       reporting foreach { report.error(_, _) }
 
-  def canceled = errors.nonEmpty
+  def canceled = erroneous || errors.nonEmpty
+
+  def cancel() = erroneous = true
 
   def enableErrorAndCancel() = enabled = true
 

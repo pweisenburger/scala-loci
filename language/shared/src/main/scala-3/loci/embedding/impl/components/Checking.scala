@@ -5,12 +5,69 @@ package components
 
 import utility.reflectionExtensions.*
 
+import java.lang.reflect.Array
 import scala.annotation.experimental
+import scala.util.control.NonFatal
 
 @experimental
 trait Checking:
-  this: Component & Commons & ErrorReporter & Placements & NonPlacements & Peers =>
+  this: Component & Commons & ErrorReporter & Placements & NonPlacements & Peers & RemoteAccessorGeneration =>
   import quotes.reflect.*
+
+  private val hasErrors =
+    try
+      val quotesImplClass = Class.forName("scala.quoted.runtime.impl.QuotesImpl")
+      val contextClass = Class.forName("dotty.tools.dotc.core.Contexts$Context")
+      val reporterClass = Class.forName("dotty.tools.dotc.reporting.Reporter")
+
+      val ctx = quotesImplClass.getMethod("ctx")
+      val reporter = contextClass.getMethod("reporter")
+      val hasErrors = reporterClass.getMethod("hasErrors")
+
+      () => hasErrors.invoke(reporter.invoke(ctx.invoke(quotes))) == true
+    catch
+      case NonFatal(_) =>
+        () => false
+  end hasErrors
+
+  private val runRefChecks =
+    try
+      val quotesImplClass = Class.forName("scala.quoted.runtime.impl.QuotesImpl")
+      val contextClass = Class.forName("dotty.tools.dotc.core.Contexts$Context")
+      val treeClass = Class.forName("dotty.tools.dotc.ast.Trees$Tree")
+      val megaPhaseClass = Class.forName("dotty.tools.dotc.transform.MegaPhase")
+      val miniPhaseClass = Class.forName("dotty.tools.dotc.transform.MegaPhase$MiniPhase")
+      val miniPhaseArrayClass = miniPhaseClass.arrayType()
+      val elimRepeatedClass = Class.forName("dotty.tools.dotc.transform.ElimRepeated")
+      val refChecksClass = Class.forName("dotty.tools.dotc.typer.RefChecks")
+
+      val ctx = quotesImplClass.getMethod("ctx")
+      val megaPhase = megaPhaseClass.getConstructor(miniPhaseArrayClass)
+      val transformUnit = megaPhaseClass.getMethod("transformUnit", treeClass, contextClass)
+      val runsAfter = miniPhaseClass.getMethod("runsAfter")
+      val runsAfterGroupsOf = miniPhaseClass.getMethod("runsAfterGroupsOf")
+      val elimRepeated = elimRepeatedClass.getConstructor()
+      val refChecks = refChecksClass.getConstructor()
+
+      val context = ctx.invoke(quotes)
+      val elimRepeatedPhase = elimRepeated.newInstance()
+      val refChecksPhase = refChecks.newInstance()
+
+      if runsAfter.invoke(elimRepeatedPhase) == Set.empty &&
+         runsAfterGroupsOf.invoke(elimRepeatedPhase) == Set.empty &&
+         runsAfter.invoke(refChecksPhase) == Set("elimRepeated") &&
+         runsAfterGroupsOf.invoke(refChecksPhase) == Set.empty then
+        val miniPhases = Array.newInstance(miniPhaseClass, 2)
+        Array.set(miniPhases, 0, elimRepeatedPhase)
+        Array.set(miniPhases, 1, refChecksPhase)
+        val phase = megaPhase.newInstance(miniPhases)
+        (tree: Tree) => transformUnit.invoke(phase, tree, context)
+      else
+        (tree: Tree) => ()
+    catch
+      case NonFatal(_) =>
+        (tree: Tree) => ()
+  end runRefChecks
 
   private inline def treeType(tree: Tree) = tree match
     case tree: Term => tree.tpe
@@ -172,7 +229,21 @@ trait Checking:
         PeerInfo.check(stat).left foreach errorAndCancel
       case _ =>
 
-    module
+    if canceled then
+      disableErrorAndCancel()
+
+    val result =
+      if !canceled && !hasErrors() then
+        val result = materializeDummySignatures(module)
+        runRefChecks(result)
+        result
+      else
+        module
+
+    if hasErrors() then
+      cancel()
+
+    result
   end checkMultitierDefinitions
 
   def checkDeferredDefinitions(module: ClassDef): ClassDef =
