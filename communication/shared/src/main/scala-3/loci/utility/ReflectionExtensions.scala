@@ -109,7 +109,7 @@ object reflectionExtensions:
         val flags = flagsClass.getField("MODULE$")
         val absOverride = flagsClass.getMethod("AbsOverride")
         absOverride.invoke(flags.get(null)) match
-          case flags: Flags @unchecked if Flags.EmptyFlags.getClass.isInstance(flags) => allFlags ::= flags
+          case absOverride: Flags @unchecked if Flags.EmptyFlags.getClass.isInstance(absOverride) => allFlags ::= absOverride
           case _ =>
       catch
         case NonFatal(_) =>
