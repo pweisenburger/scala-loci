@@ -44,17 +44,14 @@ trait Peers:
     @targetName("ofModuleType")
     def ofModule(tpe: TypeRepr): List[PeerInfo] =
       val (peers, _) =
-        tpe.baseClasses.foldLeft(List.empty[PeerInfo], Set.empty[Symbol]):
+        tpe.baseClasses.foldLeft(List.empty[PeerInfo], Set.empty[String]):
           case ((peers, overridden), symbol) =>
             val declaredPeers = symbol.declarations flatMap: symbol =>
-              if symbol.isType && !(symbol.flags is Flags.Synthetic) && !(symbol.flags is Flags.Artifact) && !(overridden contains symbol) then
+              if symbol.isType && !(symbol.flags is Flags.Synthetic) && !(symbol.flags is Flags.Artifact) && !(overridden contains symbol.name) then
                 PeerInfo(tpe.select(symbol))
               else
                 None
-            val overriddenPeers = declaredPeers.iterator flatMap: peerInfo =>
-              val symbol = peerInfo.peerType.typeSymbol
-              Iterator(symbol) ++ symbol.allOverriddenSymbols
-            (peers ++ declaredPeers, overridden ++ overriddenPeers)
+            (peers ++ declaredPeers, overridden ++ (declaredPeers map { _.peerType.name }))
       PeerInfo(defn.AnyClass.typeRef, List.empty, List.empty) :: peers
 
     private def check(tpe: TypeRepr, reference: Either[Position, Tree], qualifier: Option[TypeRepr], shallow: Boolean)
@@ -134,8 +131,12 @@ trait Peers:
           case tpe: TermRef if tpe.termSymbol.isModuleDef => ThisType(tpe.typeSymbol)
           case _ => tpe
 
+        def typeSymbol(tpe: TypeRepr) = tpe match
+          case ThisType(tref) => tref.typeSymbol
+          case _ => tpe.typeSymbol
+
         val qualifierType = thisTypeIfPossible(peerType.qualifier)
-        val qualifierSymbol = qualifierType.typeSymbol
+        val qualifierSymbol = typeSymbol(qualifierType)
 
         def checkPeerNesting(inner: Symbol, outer: Symbol): Boolean =
           inner.exists && isMultitierModule(inner) && (inner == outer || checkPeerNesting(inner.maybeOwner, outer))
@@ -145,8 +146,8 @@ trait Peers:
           path match
             case _
               if tpe =:= qualifierType && isMultitierModule(qualifierSymbol) ||
-                 checkPeerNesting(tpe.typeSymbol, qualifierSymbol) ||
-                 checkPeerNesting(qualifierSymbol, tpe.typeSymbol) => true
+                 checkPeerNesting(typeSymbol(tpe), qualifierSymbol) ||
+                 checkPeerNesting(qualifierSymbol, typeSymbol(tpe)) => true
             case AnnotatedType(underlying, _) => checkPeerPath(underlying)
             case Refinement(parent, _, _) => checkPeerPath(parent)
             case TermRef(qualifier, _) if isMultitierModule(tpe.termSymbol) => checkPeerPath(qualifier)

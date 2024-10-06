@@ -263,6 +263,8 @@ trait Dispatch:
               _ => symbols.`try`.typeRef.appliedTo(types.messageBuffer))
             val symbol = newMethod(stat.symbol, names.dispatch, tpe, Flags.Synthetic | Flags.Override, Symbol.noSymbol)
 
+            SymbolMutator.getOrErrorAndAbort.enter(stat.symbol, symbol)
+
             def body(argss: List[List[Tree]]) =
               val args @ List(request, signature, path, reference) = argss.head map { arg => Ref(arg.symbol) }: @unchecked
               val fallback = Select.unique(Super(This(stat.symbol), None), names.dispatch).appliedToArgs(args)

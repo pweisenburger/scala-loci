@@ -260,8 +260,8 @@ trait RemoteAccessorSynthesis:
     object Result:
       def apply(tree: Term) =
         extension (self: String) def withPeriod =
-          val trimmed = self.trim
-          if trimmed.nonEmpty && trimmed.last == '.' then trimmed else trimmed + '.'
+          val stripped = self.strip
+          if stripped.nonEmpty && stripped.last == '.' then stripped else stripped + '.'
         resolutionFailureCollector.foldTree(None, tree)(Symbol.noSymbol) match
           case Some(message, false) => Failure(message.withPeriod)
           case Some(message, true) => FailureOnTypeParameter(message.withPeriod, tree)

@@ -37,10 +37,10 @@ trait PlacedValueSynthesis:
     else if symbol.flags is Flags.Trait then "trait"
     else "class"
 
-  private def syntheticTrait(owner: Symbol, name: String, mangledName: String, parents: List[TypeRepr], noInits: Boolean)(decls: Symbol => List[Symbol]) =
+  private def syntheticTrait(owner: Symbol, name: String, mangledName: String, parents: List[TypeRepr], selfType: Option[TypeRepr], noInits: Boolean)(decls: Symbol => List[Symbol]) =
     owner.typeMember(name) orElse owner.typeMember(mangledName) orElse:
       val flags = Flags.Synthetic | Flags.Trait | (if noInits then Flags.NoInits else Flags.EmptyFlags)
-      val symbol = newClass(owner, if canMakeTargetName then name else mangledName, flags, parents, decls, selfType = None)
+      val symbol = newClass(owner, if canMakeTargetName then name else mangledName, flags, parents, decls, selfType)
       tryMakeTargetName(symbol, mangledName)
       SymbolMutator.getOrErrorAndAbort.enter(owner, symbol)
       symbol
@@ -350,22 +350,31 @@ trait PlacedValueSynthesis:
       val form = implementationForm(module)
       val separator = if module.isType && !module.isPackageDef && !module.isModuleDef then "#" else "."
 
-      def inheritedParentPlacedValues =
-        module.typeRef.baseClasses.tail flatMap: parent =>
-          if isMultitierModule(parent) then
-            val symbols =
-              if peer == defn.AnyClass then List(defn.AnyClass)
-              else parent.typeMember(peer.name).fold(List(defn.AnyClass)) { symbol => List(symbol, defn.AnyClass) }
-            symbols map: symbol =>
-              ThisType(module).select(synthesizedPlacedValues(parent, symbol).symbol)
-          else
-            List.empty
+      val (parents, selfType) =
+        if isMultitierModule(module) then
+          val moduleThisType = ThisType(module)
+          val baseClasses = module.typeRef.baseClasses.toSet
 
-      val parents =
-        TypeRepr.of[Object] :: (
-          if !isMultitierModule(module) then List.empty
-          else if peer == defn.AnyClass then inheritedParentPlacedValues :+ types.placedValues
-          else synthesizedPlacedValues(module, defn.AnyClass).symbol.typeRef :: inheritedParentPlacedValues)
+          val inheritedPlacedValues =
+            moduleThisType.baseClasses.tail.reverseIterator flatMap: parent =>
+              Option.when(isMultitierModule(parent)):
+                moduleThisType.select(synthesizedPlacedValues(parent, defn.AnyClass).symbol)
+
+          val (parentPlacedValues, selfTypePlacedValues) = inheritedPlacedValues partition:
+            baseClasses contains _.typeSymbol.owner
+
+          val parents =
+            TypeRepr.of[Object] :: (
+              if peer == defn.AnyClass then (parentPlacedValues ++ Iterator(types.placedValues)).toList
+              else synthesizedPlacedValues(module, defn.AnyClass).symbol.typeRef :: parentPlacedValues.toList)
+
+          val selfType =
+            Option.when(selfTypePlacedValues.hasNext):
+              selfTypePlacedValues.foldLeft(selfTypePlacedValues.next) { AndType(_, _) }
+
+          (parents, selfType)
+        else
+          (List(TypeRepr.of[Object]), None)
 
       if peer == defn.AnyClass then
         SymbolMutator.getOrErrorAndAbort.invalidateMemberCaches(module)
@@ -376,6 +385,7 @@ trait PlacedValueSynthesis:
           if peer == defn.AnyClass then s"<${names.placedValues} of $form $name>" else s"<${names.placedValues} on $name$separator${peer.name}>",
           if peer == defn.AnyClass then mangledName else s"$mangledName$$${peer.name}",
           parents,
+          selfType,
           noInits = peer != defn.AnyClass): symbol =>
             val placedValues = SynthesizedPlacedValues(symbol, module, peer, parents)
             if module.isModuleDef then
