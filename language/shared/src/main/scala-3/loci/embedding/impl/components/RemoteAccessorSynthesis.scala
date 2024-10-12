@@ -442,14 +442,13 @@ trait RemoteAccessorSynthesis:
   def synthesizeAccessors(symbol: Symbol): Accessors =
     val module = if symbol.moduleClass.exists then symbol.moduleClass else symbol
     val originalTree = symbolOriginalTree(module)
-    val tree = originalTree orElse symbolTree(module)
 
     val accessors =
       synthesizedAccessorsCache.get(module) collect:
         case (accessors, hasOriginalTree) if originalTree.isEmpty || hasOriginalTree => accessors
 
     accessors getOrElse:
-      val accessors = tree match
+      val accessors = originalTree match
         case Some(tree: ClassDef) => synthesizeAccessorsFromTree(module, tree)
         case _ => synthesizeAccessorsFromClass(module, classFileName(module))
 

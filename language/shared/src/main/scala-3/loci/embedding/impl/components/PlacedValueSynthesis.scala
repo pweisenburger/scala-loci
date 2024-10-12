@@ -197,7 +197,7 @@ trait PlacedValueSynthesis:
             (name, if hasSyntheticMultitierContextArgument(symbol) then dropLastArgumentList(info) else info, peer, Symbol.noSymbol)
 
     val peers =
-      val rhs = symbolTree(symbol) collect:
+      val rhs = symbolPreprocessedTree(symbol) collect:
         case PlacedStatement(ValDef(_, _, Some(rhs))) => rhs
         case PlacedStatement(DefDef(_, _, _, Some(rhs))) => rhs
         case NonPlacedStatement(ValDef(_, _, Some(rhs))) => rhs
@@ -399,7 +399,7 @@ trait PlacedValueSynthesis:
             val indices = mutable.Map.empty[Symbol, Int]
 
             val declarations =
-              symbolTree(module) match
+              symbolPreprocessedTree(module) match
                 case Some(ClassDef(_, _, _, _, body)) =>
                   body flatMap:
                     case stat: Definition if synthesizeMember(stat.symbol) =>

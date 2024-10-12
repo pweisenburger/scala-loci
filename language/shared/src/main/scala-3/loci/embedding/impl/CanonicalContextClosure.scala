@@ -12,9 +12,9 @@ import scala.util.control.NonFatal
 @experimental
 def inferrableCanonicalPlacementTypeContextClosure[R: Type](using Quotes)(v: Expr[Any]*): Expr[R] =
   import quotes.reflect.*
-  import info.*
+  import engine.*
 
-  object info extends Component.withQuotes(quotes), Commons, ErrorReporter, Placements, NonPlacements, PlacedTransformations
+  object engine extends Component.withQuotes(quotes), Commons, ErrorReporter, Placements, NonPlacements, PlacedTransformations
 
   object PlacementEvidence:
     def unapply(evidence: ValDef): Boolean =

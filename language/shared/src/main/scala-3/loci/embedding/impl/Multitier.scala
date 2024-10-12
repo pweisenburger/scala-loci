@@ -13,7 +13,7 @@ object Multitier:
   def annotation(using Quotes)(tree: quotes.reflect.Definition, companion: Option[quotes.reflect.Definition]): List[quotes.reflect.Definition] =
     import quotes.reflect.*
 
-    object processor extends
+    object engine extends
       Component.withQuotes(quotes),
       Commons,
       ErrorReporter,
@@ -36,7 +36,7 @@ object Multitier:
       Invocation,
       Dispatch
 
-    import processor.*
+    import engine.*
 
     val preprocessingPhases = List(
       checkMultitierDefinitions,
@@ -51,7 +51,7 @@ object Multitier:
       rewireInvocations,
       generateDispatching)
 
-    class Preprocessor extends SafeTreeMap(quotes):
+    object preprocessor extends SafeTreeMap(quotes):
       def trySwapMultitierAnnotation(symbol: Symbol) =
         SymbolMutator.get foreach: symbolMutator =>
           val instantiation = New(TypeIdent(symbols.`embedding.multitier`))
@@ -62,65 +62,46 @@ object Multitier:
           symbolMutator.removeAnnotation(symbol, symbols.`language.multitier`)
           symbolMutator.updateAnnotationWithTree(symbol, annotation)
 
-      override def transformTerm(term: Term)(owner: Symbol) =
-        if canceled then term else super.transformTerm(term)(owner)
+      override def transformStatement(stat: Statement)(owner: Symbol) = stat match
+        case stat: ClassDef if isMultitierModule(stat.symbol) =>
+          trySwapMultitierAnnotation(stat.symbol)
+          symbolOriginalTree(stat.symbol) = stat
 
-      override def transformStatement(stat: Statement)(owner: Symbol) =
-        super.transformStatement(stat)(owner) match
-          case stat: ValDef if stat.symbol.hasAnnotation(symbols.`language.multitier`) =>
-            trySwapMultitierAnnotation(stat.symbol)
-            symbolOriginalTree(stat.symbol) = stat
-            stat
-
-          case stat: ClassDef if isMultitierModule(stat.symbol) =>
-            trySwapMultitierAnnotation(stat.symbol)
-            symbolOriginalTree(stat.symbol) = stat
-
+          val preprocessed =
             preprocessingPhases.foldLeft(stat): (stat, process) =>
-              if !canceled then
-                val processed = process(stat)
+              process(stat)
 
-                symbolTree(processed.symbol) = processed
-                processed.body foreach:
-                  case stat: Definition => symbolTree(stat.symbol) = stat
-                  case _ =>
+          symbolPreprocessedTree(preprocessed.symbol) = preprocessed
+          preprocessed.body foreach:
+            case stat: Definition => symbolPreprocessedTree(stat.symbol) = stat
+            case _ =>
 
-                processed
-              else
-                stat
+          super.transformStatement(preprocessed)(owner)
 
-          case stat: Definition =>
-            symbolOriginalTree(stat.symbol) = stat
-            stat
+        case stat: Definition =>
+          if stat.symbol.hasAnnotation(symbols.`language.multitier`) then
+            trySwapMultitierAnnotation(stat.symbol)
+          symbolOriginalTree(stat.symbol) = stat
+          super.transformStatement(stat)(owner)
 
-          case stat =>
-            stat
-    end Preprocessor
+        case stat =>
+          super.transformStatement(stat)(owner)
+    end preprocessor
 
-    class Processor(skip: Boolean) extends SafeTreeMap(quotes):
+    object processor extends SafeTreeMap(quotes):
       override def transformStatement(stat: Statement)(owner: Symbol) =
         super.transformStatement(stat)(owner) match
           case stat: ClassDef if isMultitierModule(stat.symbol) =>
             val processed =
-              if !skip then
-                processingPhases.foldLeft(stat): (stat, process) =>
-                  val processed = process(stat)
-
-                  symbolTree(processed.symbol) = processed
-                  processed.body foreach :
-                    case stat: Definition => symbolTree(stat.symbol) = stat
-                    case _ =>
-
-                  processed
-              else
-                stat
+              processingPhases.foldLeft(stat): (stat, process) =>
+                process(stat)
 
             APIExtraction.extractAPI(processed)
             processed
 
           case stat =>
             stat
-    end Processor
+    end processor
 
     tree match
       case _: ClassDef | _: ValDef if tree.symbol.owner hasAncestor isMultitierModule =>
@@ -129,13 +110,17 @@ object Multitier:
       case tree: ClassDef =>
         checkMultitierAnnotations(tree)
 
-        object preprocessor extends Preprocessor
-        val preprocessed = preprocessor.transformSubTrees(List(tree))(tree.symbol.owner).head
+        val preprocessed =
+          preprocessor.transformSubTrees(List(tree))(tree.symbol.owner).head
 
-        object processor extends Processor(canceled)
-        val processed = processor.transformSubTrees(List(preprocessed))(tree.symbol.owner).head
+        val processed =
+          if !canceled then
+            processor.transformSubTrees(List(preprocessed))(tree.symbol.owner).head
+          else
+            preprocessed
 
         reportErrors(abortOnErrors = true)
+
         List(processed) ++ companion
 
       case _ =>
