@@ -142,10 +142,13 @@ object reflectionExtensions:
         pos.toString endsWith ">"
 
       inline def inUserCode(pos: Position) =
-        pos.sourceFile == splicePos.sourceFile &&
-        pos.start >= splicePos.start &&
-        pos.end <= splicePos.end &&
-        (pos.start != splicePos.start || (pos.end != splicePos.start && pos.end != splicePos.end))
+        try
+          pos.sourceFile == splicePos.sourceFile &&
+          pos.start >= splicePos.start &&
+          pos.end <= splicePos.end &&
+          (pos.start != splicePos.start || (pos.end != splicePos.start && pos.end != splicePos.end))
+        catch
+          case NonFatal(_) => false
 
       class PositionsAccumulator(filter: Position => Boolean) extends TreeAccumulator[List[Position]]:
         def foldTree(positions: List[Position], tree: Tree)(owner: Symbol) =
