@@ -67,6 +67,13 @@ trait RemoteAccessorSynthesis:
       SymbolMutator.getOrErrorAndAbort.enter(module, ties)
       (signature, ties)
 
+  private def injectFieldSymbol(symbol: Symbol) =
+    val declared = symbol.owner.declaredField(symbol.name)
+    if declared.exists then
+      SymbolMutator.getOrErrorAndAbort.replace(symbol.owner, declared, symbol)
+    else
+      SymbolMutator.getOrErrorAndAbort.enter(symbol.owner, symbol)
+
   private val PureInterfaceFlag =
     try
       val flagsClass = Class.forName("dotty.tools.dotc.core.Flags$")
@@ -856,7 +863,7 @@ trait RemoteAccessorSynthesis:
           flags | Flags.Lazy | Flags.Protected | (if rhs.isEmpty then Flags.Deferred else Flags.EmptyFlags),
           Symbol.noSymbol)
         trySetThreadUnsafe(symbol)
-        SymbolMutator.getOrErrorAndAbort.enter(module, symbol)
+        injectFieldSymbol(symbol)
 
         argsHead :: argsTail.toList.flatten match
           case List(signature, base, result, proxy) if !locallyScoped =>
@@ -1087,8 +1094,7 @@ trait RemoteAccessorSynthesis:
                   resultMarshallable.types.base,
                   resultMarshallable.types.proxy))
               val symbol = newVal(module, name, info, Flags.Final | Flags.Protected, Symbol.noSymbol)
-
-              SymbolMutator.getOrErrorAndAbort.enter(module, symbol)
+              injectFieldSymbol(symbol)
 
               inline def reference(symbol: Symbol) =
                 if symbol.owner == types.marshallable.typeSymbol.companionModule.moduleClass then

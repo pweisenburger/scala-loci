@@ -37,23 +37,6 @@ trait PlacedValueSynthesis:
     else if symbol.flags is Flags.Trait then "trait"
     else "class"
 
-  private def syntheticTrait(
-      owner: Symbol,
-      name: String,
-      mangledName: String,
-      parents: List[TypeRepr],
-      selfType: Option[TypeRepr],
-      noInits: Boolean,
-      enterSymbol: Boolean)(
-      decls: Symbol => List[Symbol]) =
-    owner.typeMember(name) orElse owner.typeMember(mangledName) orElse:
-      val flags = Flags.Synthetic | Flags.Trait | (if noInits then Flags.NoInits else Flags.EmptyFlags)
-      val symbol = newClass(owner, if canMakeTargetName then name else mangledName, flags, parents, decls, selfType)
-      tryMakeTargetName(symbol, mangledName)
-      if enterSymbol then
-        SymbolMutator.getOrErrorAndAbort.enter(owner, symbol)
-      symbol
-
   private def copyAnnotations(from: Symbol, to: Symbol, decrementContextResultCount: Boolean, sameTargetName: Boolean) =
     def updateSymbolAnnotationWithTree(symbol: Symbol, tree: Tree): Unit =
       SymbolMutator.get.fold(
@@ -390,68 +373,71 @@ trait PlacedValueSynthesis:
         SymbolMutator.getOrErrorAndAbort.invalidateMemberCaches(module)
 
       synthesizedPlacedValuesCache.getOrElseUpdate(module, peer, tier):
-        val symbol = syntheticTrait(
-          module,
-          if peer == defn.AnyClass then s"<${names.placedValues} of $form $name>" else s"<${names.placedValues} on $name$separator${peer.name}>",
-          if peer == defn.AnyClass then mangledName else s"$mangledName$$${peer.name}",
-          parents,
-          selfType,
-          noInits = peer != defn.AnyClass,
-          enterSymbol = preprocessedTree.isDefined): symbol =>
-            val placedValues = SynthesizedPlacedValues(symbol, module, peer, parents)
-            if module.isModuleDef then
-              synthesizedPlacedValuesCache.update(module.companionModule, peer, placedValues, tier)
-            synthesizedPlacedValuesCache.update(module, peer, placedValues, tier)
-            synthesizedPlacedValuesCache.update(symbol, (), placedValues, tier)
+        def symbolDecls(symbol: Symbol) =
+          val placedValues = SynthesizedPlacedValues(symbol, module, peer, parents)
+          if module.isModuleDef then
+            synthesizedPlacedValuesCache.update(module.companionModule, peer, placedValues, tier)
+          synthesizedPlacedValuesCache.update(module, peer, placedValues, tier)
+          synthesizedPlacedValuesCache.update(symbol, (), placedValues, tier)
 
-            def collectDeclarations(impls: List[Symbol]) =
-              impls collect { case impl if impl.owner == symbol => impl }
+          def collectDeclarations(impls: List[Symbol]) =
+            impls collect { case impl if impl.owner == symbol => impl }
 
-            val indices = mutable.Map.empty[Symbol, Int]
+          val indices = mutable.Map.empty[Symbol, Int]
 
-            val declarations =
-              preprocessedTree match
-                case Some(ClassDef(_, _, _, _, body)) =>
-                  body flatMap:
-                    case stat: Definition if synthesizeMember(stat.symbol) =>
-                      synthesizedDefinitions(stat.symbol).fold(List.empty):
-                        case SynthesizedDefinitions(_, binding, init, setter, impls) =>
-                          collectDeclarations(binding :: init.toList ++ setter.toList ++ impls)
-                    case statement: Term =>
-                      val statementPeer = PlacementInfo(statement.tpe.resultType).fold(defn.AnyClass) { _.peerType.typeSymbol }
-                      if peer == defn.AnyClass || peer == statementPeer then
-                        val index = indices.getOrElse(statementPeer, 0)
-                        indices += statementPeer -> (index + 1)
-                        synthesizedStatement(module, statementPeer, index).toList flatMap: statement =>
-                          collectDeclarations(statement.binding :: statement.impls)
-                      else
-                        List.empty
-                    case _ =>
-                      List.empty
-                case _ =>
-                  List.empty
-
-            val decls =
-              if declarations.isEmpty then
-                module.declarations flatMap: decl =>
-                  if synthesizeMember(decl) then
-                    synthesizedDefinitions(decl).fold(List.empty):
+          val declarations =
+            preprocessedTree match
+              case Some(ClassDef(_, _, _, _, body)) =>
+                body flatMap:
+                  case stat: Definition if synthesizeMember(stat.symbol) =>
+                    synthesizedDefinitions(stat.symbol).fold(List.empty):
                       case SynthesizedDefinitions(_, binding, init, setter, impls) =>
                         collectDeclarations(binding :: init.toList ++ setter.toList ++ impls)
-                  else
+                  case statement: Term =>
+                    val statementPeer = PlacementInfo(statement.tpe.resultType).fold(defn.AnyClass) { _.peerType.typeSymbol }
+                    if peer == defn.AnyClass || peer == statementPeer then
+                      val index = indices.getOrElse(statementPeer, 0)
+                      indices += statementPeer -> (index + 1)
+                      synthesizedStatement(module, statementPeer, index).toList flatMap: statement =>
+                        collectDeclarations(statement.binding :: statement.impls)
+                    else
+                      List.empty
+                  case _ =>
                     List.empty
-              else
-                declarations
+              case _ =>
+                List.empty
 
-            if peer == defn.AnyClass &&
-               (module.owner hasAncestor isMultitierModule) &&
-               (parents forall { _.typeSymbol.maybeOwner.maybeOwner != symbol.maybeOwner.maybeOwner }) then
-              val placedValues = synthesizedPlacedValues(module.owner, defn.AnyClass).symbol
-              val name = s"<${names.outerPlacedValues} of ${implementationForm(module.owner)} ${fullName(module.owner)}>"
-              newVal(symbol, name, placedValues.typeRef, Flags.ParamAccessor, Symbol.noSymbol) :: decls
+          val decls =
+            if declarations.isEmpty then
+              module.declarations flatMap: decl =>
+                if synthesizeMember(decl) then
+                  synthesizedDefinitions(decl).fold(List.empty):
+                    case SynthesizedDefinitions(_, binding, init, setter, impls) =>
+                      collectDeclarations(binding :: init.toList ++ setter.toList ++ impls)
+                else
+                  List.empty
             else
-              decls
-        end symbol
+              declarations
+
+          if peer == defn.AnyClass &&
+             (module.owner hasAncestor isMultitierModule) &&
+             (parents forall { _.typeSymbol.maybeOwner.maybeOwner != symbol.maybeOwner.maybeOwner }) then
+            val placedValues = synthesizedPlacedValues(module.owner, defn.AnyClass).symbol
+            val name = s"<${names.outerPlacedValues} of ${implementationForm(module.owner)} ${fullName(module.owner)}>"
+            newVal(symbol, name, placedValues.typeRef, Flags.ParamAccessor, Symbol.noSymbol) :: decls
+          else
+            decls
+        end symbolDecls
+
+        val symbolFlags = Flags.Synthetic | Flags.Trait | (if peer != defn.AnyClass then Flags.NoInits else Flags.EmptyFlags)
+        val symbolName = if peer == defn.AnyClass then s"<${names.placedValues} of $form $name>" else s"<${names.placedValues} on $name$separator${peer.name}>"
+        val symbolMangledName = if peer == defn.AnyClass then mangledName else s"$mangledName$$${peer.name}"
+        val symbol = newClass(module, if canMakeTargetName then symbolName else symbolMangledName, symbolFlags, parents, symbolDecls, selfType)
+
+        tryMakeTargetName(symbol, symbolMangledName)
+        module.declaredType(symbolName).headOption orElse module.declaredType(symbolMangledName).headOption match
+          case Some(declared) => SymbolMutator.getOrErrorAndAbort.replace(module, declared, symbol)
+          case _ => SymbolMutator.getOrErrorAndAbort.enter(module, symbol)
 
         val (paramNames, paramTypes) = (symbol.declaredFields collect { case symbol if symbol.isParamAccessor => symbol.name -> symbol.info }).unzip
         if paramNames.nonEmpty then
