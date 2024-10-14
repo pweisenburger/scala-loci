@@ -8,10 +8,11 @@ import scala.collection.mutable
 import scala.quoted.*
 
 object SourceCode:
-  private val cache = mutable.WeakHashMap.empty[AnyRef, SourceCode]
+  private val cache = Cache[Any, SourceCode]
 
   def apply(using Quotes)(file: quotes.reflect.SourceFile): SourceCode =
-    cache.getOrElseUpdate(file, SourceCode(file.content getOrElse ""))
+    cache.getOrElseUpdate(file):
+      SourceCode(file.content getOrElse "")
 end SourceCode
 
 case class SourceCode(code: String) extends IndexedSeq[Char]:

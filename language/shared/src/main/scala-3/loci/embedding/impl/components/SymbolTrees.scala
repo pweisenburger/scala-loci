@@ -4,12 +4,11 @@ package impl
 package components
 
 import scala.annotation.experimental
-import scala.collection.mutable
 import scala.util.control.NonFatal
 
 object SymbolTrees:
-  private val originalTreeCache = mutable.Map.empty[Any, Any]
-  private val preprocessedTreeCache = mutable.Map.empty[Any, Any]
+  private val originalTreeCache = Cache[Any, Any]
+  private val preprocessedTreeCache = Cache[Any, Any]
 
 @experimental
 trait SymbolTrees:
@@ -17,9 +16,9 @@ trait SymbolTrees:
   import quotes.reflect.*
 
   private val originalTreeCache = SymbolTrees.originalTreeCache match
-    case cache: mutable.Map[Symbol, Option[Tree]] @unchecked => cache
+    case cache: Cache[Symbol, Option[Tree]] @unchecked => cache
   private val preprocessedTreeCache = SymbolTrees.preprocessedTreeCache match
-    case cache: mutable.Map[Symbol, Tree] @unchecked => cache
+    case cache: Cache[Symbol, Tree] @unchecked => cache
 
   private val currentCompilationUnit =
     try
@@ -81,7 +80,7 @@ trait SymbolTrees:
 
   object symbolOriginalTree:
     def apply(symbol: Symbol) =
-      originalTreeCache.getOrElseUpdate(symbol, {
+      originalTreeCache.getOrElseUpdate(symbol):
         val compilationUnits =
           currentCompilationUnit().fold(allCompilationUnits()): compilationUnit =>
             allCompilationUnits().fold(Some(List(compilationUnit))): allCompilationUnits =>
@@ -100,10 +99,10 @@ trait SymbolTrees:
             Option.when(pos.start >= 0 && pos.end > pos.start && !(pos.toString endsWith ">")) { tree }
           catch
             case NonFatal(_) => None
-      })
+    end apply
 
     def update(symbol: Symbol, tree: Tree) =
-      originalTreeCache += symbol -> Some(tree)
+      originalTreeCache.update(symbol, Some(tree))
   end symbolOriginalTree
 
   object symbolPreprocessedTree:
@@ -111,6 +110,6 @@ trait SymbolTrees:
       preprocessedTreeCache.get(symbol)
 
     def update(symbol: Symbol, tree: Tree) =
-      preprocessedTreeCache += symbol -> tree
+      preprocessedTreeCache.update(symbol, tree)
   end symbolPreprocessedTree
 end SymbolTrees

@@ -9,9 +9,9 @@ import scala.annotation.experimental
 import scala.collection.mutable
 
 object PlacedValueSynthesis:
-  private val synthesizedDefinitionsCache = mutable.Map.empty[Any, Any]
-  private val synthesizedStatementsCache = mutable.Map.empty[Any, Any]
-  private val synthesizedPlacedValuesCache = mutable.Map.empty[Any, Any]
+  private val synthesizedDefinitionsCache = Cache.Tiered[Any, Any]
+  private val synthesizedStatementsCache = Cache.Layered[Any, Any, Any]
+  private val synthesizedPlacedValuesCache = Cache.Layered.Tiered[Any, Any, Any]
 
 @experimental
 trait PlacedValueSynthesis:
@@ -23,11 +23,11 @@ trait PlacedValueSynthesis:
   case class SynthesizedStatements(binding: Symbol, impls: List[Symbol])
 
   private val synthesizedDefinitionsCache = PlacedValueSynthesis.synthesizedDefinitionsCache match
-    case cache: mutable.Map[Symbol, (SynthesizedDefinitions, Boolean)] @unchecked => cache
+    case cache: Cache.Tiered[Symbol, SynthesizedDefinitions] @unchecked => cache
   private val synthesizedStatementsCache = PlacedValueSynthesis.synthesizedStatementsCache match
-    case cache: mutable.Map[(Symbol, Symbol, Int) | Symbol, Option[SynthesizedStatements]] @unchecked => cache
+    case cache: Cache.Layered[Symbol, (Symbol, Int) | Unit, Option[SynthesizedStatements]] @unchecked => cache
   private val synthesizedPlacedValuesCache = PlacedValueSynthesis.synthesizedPlacedValuesCache match
-    case cache: mutable.Map[(Symbol, Symbol) | Symbol, (SynthesizedPlacedValues, Boolean)] @unchecked => cache
+    case cache: Cache.Layered.Tiered[Symbol, Symbol | Unit, SynthesizedPlacedValues] @unchecked => cache
 
   private def mangledSymbolName(symbol: Symbol) =
     f"loci$$${s"${implementationForm(symbol)} ${fullName(symbol)}".hashCode}%08x"
@@ -181,12 +181,9 @@ trait PlacedValueSynthesis:
 
   private def synthesizedValOrDef(symbol: Symbol): SynthesizedDefinitions =
     val preprocessedTree = symbolPreprocessedTree(symbol)
+    val tier = if preprocessedTree.isDefined then 1 else 0
 
-    val synthesizedDefinition =
-      synthesizedDefinitionsCache.get(symbol) collect:
-        case (synthesizedDefinition, hasPreprocessedTree) if preprocessedTree.isEmpty || hasPreprocessedTree => synthesizedDefinition
-
-    synthesizedDefinition getOrElse:
+    synthesizedDefinitionsCache.getOrElseUpdate(symbol, tier):
       val multitierModule = isMultitierModule(symbol)
       val placedName = s"<${names.placedValue} ${symbol.name} of ${fullName(symbol.owner)}>"
 
@@ -232,11 +229,7 @@ trait PlacedValueSynthesis:
       val universalValues = synthesizedPlacedValues(symbol.owner, defn.AnyClass).symbol
       val placedValues = peers map { synthesizedPlacedValues(symbol.owner, _).symbol }
 
-      val synthesizedDefinition =
-        synthesizedDefinitionsCache.get(symbol) collect :
-          case (synthesizedDefinition, hasPreprocessedTree) if preprocessedTree.isEmpty || hasPreprocessedTree => synthesizedDefinition
-
-      synthesizedDefinition getOrElse :
+      synthesizedDefinitionsCache.getOrElseUpdate(symbol, tier):
         val decrementContextResultCount = info != symbol.info
         val universalOnly = peer == defn.AnyClass && peers.sizeIs == 1 || (symbol.flags is Flags.Deferred) || multitierModule
         val flags =
@@ -286,19 +279,18 @@ trait PlacedValueSynthesis:
             SynthesizedDefinitions(symbol, universal, None, setter, List.empty)
         end definition
 
-        synthesizedDefinitionsCache += symbol -> (definition -> preprocessedTree.isDefined)
-        synthesizedDefinitionsCache += definition.binding -> (definition -> preprocessedTree.isDefined)
-        definition.init foreach { synthesizedDefinitionsCache += _ -> (definition -> preprocessedTree.isDefined) }
-        definition.impls foreach { synthesizedDefinitionsCache += _ -> (definition -> preprocessedTree.isDefined) }
+        synthesizedDefinitionsCache.update(definition.binding, definition, tier)
+        definition.init foreach { synthesizedDefinitionsCache.update(_, definition, tier) }
+        definition.impls foreach { synthesizedDefinitionsCache.update(_, definition, tier) }
         definition
   end synthesizedValOrDef
 
   private def synthesizedModule(symbol: Symbol): SynthesizedDefinitions =
-    val (synthesizedDefinition, _) = synthesizedDefinitionsCache.getOrElse(symbol -> true, {
+    synthesizedDefinitionsCache.getOrElseUpdate(symbol, tier = 1):
       val module = if symbol.moduleClass.exists then symbol.moduleClass else symbol
       val modulePlacedValues = synthesizedPlacedValues(module, defn.AnyClass).symbol
       val ownerPlacedValues = synthesizedPlacedValues(module.owner, defn.AnyClass).symbol
-      synthesizedDefinitionsCache.getOrElse(module -> true, {
+      synthesizedDefinitionsCache.getOrElseUpdate(symbol, tier = 1):
         val flags = ownerPlacedValues.fieldMember(module.companionModule.name).fold(Flags.EmptyFlags): symbol =>
           if symbol.flags is Flags.Lazy then Flags.Lazy else Flags.EmptyFlags
         val binding = ownerPlacedValues.declaredField(module.companionModule.name) orElse:
@@ -306,15 +298,11 @@ trait PlacedValueSynthesis:
         val definition = SynthesizedDefinitions(module, binding, None, None, List.empty)
 
         if module.isModuleDef then
-          synthesizedDefinitionsCache += module.companionModule -> (definition -> true)
-        synthesizedDefinitionsCache += module -> (definition -> true)
-        synthesizedDefinitionsCache += definition.binding -> (definition -> true)
-        definition.init foreach { synthesizedDefinitionsCache += _ -> (definition -> true) }
-        definition.impls foreach { synthesizedDefinitionsCache += _ -> (definition -> true) }
-        definition -> true
-      })
-    })
-    synthesizedDefinition
+          synthesizedDefinitionsCache.update(module.companionModule, definition, tier = 1)
+        synthesizedDefinitionsCache.update(definition.binding, definition, tier = 1)
+        definition.init foreach { synthesizedDefinitionsCache.update(_, definition, tier = 1) }
+        definition.impls foreach { synthesizedDefinitionsCache.update(_, definition, tier = 1) }
+        definition
   end synthesizedModule
 
   def synthesizedDefinitions(symbol: Symbol): Option[SynthesizedDefinitions] =
@@ -329,17 +317,17 @@ trait PlacedValueSynthesis:
       None
 
   def synthesizedStatement(symbol: Symbol): Option[SynthesizedStatements] =
-    synthesizedStatementsCache.get(symbol).flatten
+    synthesizedStatementsCache.get(symbol, ()).flatten
 
   def synthesizedStatement(module: Symbol, peer: Symbol, index: Int): Option[SynthesizedStatements] =
-    synthesizedStatementsCache.getOrElse((module, peer, index), {
+    synthesizedStatementsCache.getOrElseUpdate(module, (peer, index)):
       if peer != defn.AnyClass then
         val name = s"<${names.placedStatement} $index of ${fullName(peer)}>"
         val universalValues = synthesizedPlacedValues(module, defn.AnyClass).symbol
         val placedValues = synthesizedPlacedValues(module, peer).symbol
         val unaryProcedureType = MethodType(List.empty)(_ => List.empty, _ => TypeRepr.of[Unit])
 
-        synthesizedStatementsCache.getOrElse((module, peer, index), {
+        synthesizedStatementsCache.getOrElseUpdate(module, (peer, index)):
           val binding = universalValues.declaredField(name) orElse:
             newMethod(universalValues, name, unaryProcedureType, Flags.Synthetic, Symbol.noSymbol)
 
@@ -347,33 +335,26 @@ trait PlacedValueSynthesis:
             newMethod(placedValues, name, unaryProcedureType, Flags.Synthetic | Flags.Override, Symbol.noSymbol)
 
           val statement = Some(SynthesizedStatements(binding, List(impl)))
-          synthesizedStatementsCache += (module, peer, index) -> statement
-          synthesizedStatementsCache += binding -> (statement -> true)
-          synthesizedStatementsCache += impl -> (statement -> true)
+          synthesizedStatementsCache.update(binding, (), statement)
+          synthesizedStatementsCache.update(impl, (), statement)
           statement
-        })
       else
-        synthesizedStatementsCache += (module, peer, index) -> None
         None
-    })
+  end synthesizedStatement
 
   def synthesizeMember(symbol: Symbol): Boolean =
     isMultitierNestedPath(symbol.maybeOwner) &&
     (symbol.isTerm && !symbol.isModuleDef && !symbol.isParamAccessor || (symbol.isModuleDef && symbol.isClassDef))
 
   def synthesizedPlacedValues(symbol: Symbol): Option[SynthesizedPlacedValues] =
-    synthesizedPlacedValuesCache.get(symbol) map: (synthesizedPlacedValues, _) =>
-      synthesizedPlacedValues
+    synthesizedPlacedValuesCache.get(symbol, ())
 
   def synthesizedPlacedValues(symbol: Symbol, peer: Symbol): SynthesizedPlacedValues =
     val module = if symbol.moduleClass.exists then symbol.moduleClass else symbol
     val preprocessedTree = symbolPreprocessedTree(module)
+    val tier = if preprocessedTree.isDefined then 1 else 0
 
-    val cachedSynthesizedPlacedValues =
-      synthesizedPlacedValuesCache.get(module, peer) collect:
-        case (synthesizedPlacedValues, hasPreprocessedTree) if preprocessedTree.isEmpty || hasPreprocessedTree => synthesizedPlacedValues
-
-    cachedSynthesizedPlacedValues getOrElse:
+    synthesizedPlacedValuesCache.getOrElseUpdate(module, peer, tier):
       val name = fullName(module)
       val mangledName = mangledSymbolName(module)
       val form = implementationForm(module)
@@ -408,11 +389,7 @@ trait PlacedValueSynthesis:
       if peer == defn.AnyClass then
         SymbolMutator.getOrErrorAndAbort.invalidateMemberCaches(module)
 
-      val cachedSynthesizedPlacedValues =
-        synthesizedPlacedValuesCache.get(module, peer) collect:
-          case (synthesizedPlacedValues, hasPreprocessedTree) if preprocessedTree.isEmpty || hasPreprocessedTree => synthesizedPlacedValues
-
-      cachedSynthesizedPlacedValues getOrElse:
+      synthesizedPlacedValuesCache.getOrElseUpdate(module, peer, tier):
         val symbol = syntheticTrait(
           module,
           if peer == defn.AnyClass then s"<${names.placedValues} of $form $name>" else s"<${names.placedValues} on $name$separator${peer.name}>",
@@ -423,9 +400,9 @@ trait PlacedValueSynthesis:
           enterSymbol = preprocessedTree.isDefined): symbol =>
             val placedValues = SynthesizedPlacedValues(symbol, module, peer, parents)
             if module.isModuleDef then
-              synthesizedPlacedValuesCache += (module.companionModule, peer) -> (placedValues -> preprocessedTree.isDefined)
-            synthesizedPlacedValuesCache += (module, peer) -> (placedValues -> preprocessedTree.isDefined)
-            synthesizedPlacedValuesCache += symbol -> (placedValues -> preprocessedTree.isDefined)
+              synthesizedPlacedValuesCache.update(module.companionModule, peer, placedValues, tier)
+            synthesizedPlacedValuesCache.update(module, peer, placedValues, tier)
+            synthesizedPlacedValuesCache.update(symbol, (), placedValues, tier)
 
             def collectDeclarations(impls: List[Symbol]) =
               impls collect { case impl if impl.owner == symbol => impl }

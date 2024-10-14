@@ -16,9 +16,9 @@ import scala.math.Ordering
 import scala.util.control.NonFatal
 
 object RemoteAccessorSynthesis:
-  private val synthesizedModuleSignatureCache = mutable.Map.empty[Any, Any]
-  private val synthesizedPeerSignatureCache = mutable.Map.empty[Any, Any]
-  private val synthesizedAccessorsCache = mutable.Map.empty[Any, Any]
+  private val synthesizedModuleSignatureCache = Cache[Any, Any]
+  private val synthesizedPeerSignatureCache = Cache.Layered[Any, Any, Any]
+  private val synthesizedAccessorsCache = Cache.Tiered[Any, Any]
   private var placedValueInfoConstructorArgumentsChecked = false
   private var marshallableInfoConstructorArgumentsChecked = false
 
@@ -36,36 +36,36 @@ trait RemoteAccessorSynthesis:
     placed: SeqMap[Symbol | Int, (Symbol, Option[ValDef])])
 
   private val synthesizedModuleSignatureCache = RemoteAccessorSynthesis.synthesizedModuleSignatureCache match
-    case cache: mutable.Map[Symbol, (Symbol, Symbol)] @unchecked => cache
+    case cache: Cache[Symbol, (Symbol, Symbol)] @unchecked => cache
   private val synthesizedPeerSignatureCache = RemoteAccessorSynthesis.synthesizedPeerSignatureCache match
-    case cache: mutable.Map[(Symbol, Symbol), (Symbol, Symbol)] @unchecked => cache
+    case cache: Cache.Layered[Symbol, Symbol, (Symbol, Symbol)] @unchecked => cache
   private val synthesizedAccessorsCache = RemoteAccessorSynthesis.synthesizedAccessorsCache match
-    case cache: mutable.Map[Symbol, (Accessors, Boolean)] @unchecked => cache
+    case cache: Cache.Tiered[Symbol, Accessors] @unchecked => cache
 
   def meaningfulArgumentType(tpe: TypeRepr) =
     tpe.typeSymbol != defn.UnitClass && tpe.typeSymbol != defn.NullClass && tpe.typeSymbol != defn.NothingClass
 
-  def synthesizeModuleSignature(module: Symbol) = synthesizedModuleSignatureCache.getOrElseUpdate(module, {
-    val hasMultitierParent = module.typeRef.baseClasses.tail exists isMultitierModule
-    val flags = Flags.Lazy | (if hasMultitierParent then Flags.Override else Flags.EmptyFlags)
-    val identifier = newVal(module, names.module, TypeRepr.of[String], flags, Symbol.noSymbol)
-    val signature = newVal(module, names.signature, types.moduleSignature, flags, Symbol.noSymbol)
-    SymbolMutator.getOrErrorAndAbort.enter(module, identifier)
-    SymbolMutator.getOrErrorAndAbort.enter(module, signature)
-    (identifier, signature)
-  })
+  def synthesizeModuleSignature(module: Symbol) =
+    synthesizedModuleSignatureCache.getOrElseUpdate(module):
+      val hasMultitierParent = module.typeRef.baseClasses.tail exists isMultitierModule
+      val flags = Flags.Lazy | (if hasMultitierParent then Flags.Override else Flags.EmptyFlags)
+      val identifier = newVal(module, names.module, TypeRepr.of[String], flags, Symbol.noSymbol)
+      val signature = newVal(module, names.signature, types.moduleSignature, flags, Symbol.noSymbol)
+      SymbolMutator.getOrErrorAndAbort.enter(module, identifier)
+      SymbolMutator.getOrErrorAndAbort.enter(module, signature)
+      (identifier, signature)
 
-  def synthesizePeerSignature(module: Symbol, peer: Symbol) = synthesizedPeerSignatureCache.getOrElseUpdate((module, peer), {
-    val overridden = (peer.allOverriddenSymbols map { _.owner }).toSet + peer.owner
-    val isOverriddingPeer = module.typeRef.baseClasses.tail exists { overridden contains _ }
-    val overridingFlags = if isOverriddingPeer then Flags.Override else Flags.EmptyFlags
-    val info = ByNameType(symbols.map.typeRef.appliedTo(List(types.peerSignature, types.peerTie)))
-    val signature = newVal(module, s"${names.peerSignature}${peer.name}", types.peerSignature, Flags.Lazy | overridingFlags, Symbol.noSymbol)
-    val ties = newMethod(module, s"${names.peerTies}${peer.name}", info, overridingFlags, Symbol.noSymbol)
-    SymbolMutator.getOrErrorAndAbort.enter(module, signature)
-    SymbolMutator.getOrErrorAndAbort.enter(module, ties)
-    (signature, ties)
-  })
+  def synthesizePeerSignature(module: Symbol, peer: Symbol) =
+    synthesizedPeerSignatureCache.getOrElseUpdate(module, peer):
+      val overridden = (peer.allOverriddenSymbols map { _.owner }).toSet + peer.owner
+      val isOverriddingPeer = module.typeRef.baseClasses.tail exists { overridden contains _ }
+      val overridingFlags = if isOverriddingPeer then Flags.Override else Flags.EmptyFlags
+      val info = ByNameType(symbols.map.typeRef.appliedTo(List(types.peerSignature, types.peerTie)))
+      val signature = newVal(module, s"${names.peerSignature}${peer.name}", types.peerSignature, Flags.Lazy | overridingFlags, Symbol.noSymbol)
+      val ties = newMethod(module, s"${names.peerTies}${peer.name}", info, overridingFlags, Symbol.noSymbol)
+      SymbolMutator.getOrErrorAndAbort.enter(module, signature)
+      SymbolMutator.getOrErrorAndAbort.enter(module, ties)
+      (signature, ties)
 
   private val PureInterfaceFlag =
     try
@@ -442,19 +442,15 @@ trait RemoteAccessorSynthesis:
   def synthesizeAccessors(symbol: Symbol): Accessors =
     val module = if symbol.moduleClass.exists then symbol.moduleClass else symbol
     val originalTree = symbolOriginalTree(module)
+    val tier = if originalTree.isDefined then 1 else 0
 
-    val accessors =
-      synthesizedAccessorsCache.get(module) collect:
-        case (accessors, hasOriginalTree) if originalTree.isEmpty || hasOriginalTree => accessors
-
-    accessors getOrElse:
+    synthesizedAccessorsCache.getOrElseUpdate(module, tier):
       val accessors = originalTree match
         case Some(tree: ClassDef) => synthesizeAccessorsFromTree(module, tree)
         case _ => synthesizeAccessorsFromClass(module, classFileName(module))
 
-      synthesizedAccessorsCache += module -> (accessors, originalTree.isDefined)
       if module.isModuleDef then
-        synthesizedAccessorsCache += module.companionModule -> (accessors, originalTree.isDefined)
+        synthesizedAccessorsCache.update(module.companionModule, accessors, tier)
 
       accessors
   end synthesizeAccessors
