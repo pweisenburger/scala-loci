@@ -203,11 +203,6 @@ trait Commons:
     val placedStatement = "placed statement"
     val placedValues = "placed values"
     val outerPlacedValues = "placed values"
-    val infoSignature = "signature"
-    val infoArguments = "arguments"
-    val infoBase = "base"
-    val infoResult = "result"
-    val infoProxy = "proxy"
 
   object Tuple extends TupleExtractor(quotes)
 

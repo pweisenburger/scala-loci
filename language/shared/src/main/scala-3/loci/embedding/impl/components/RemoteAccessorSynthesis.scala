@@ -19,8 +19,6 @@ object RemoteAccessorSynthesis:
   private val synthesizedModuleSignatureCache = Cache[Any, Any]
   private val synthesizedPeerSignatureCache = Cache.Layered[Any, Any, Any]
   private val synthesizedAccessorsCache = Cache.Tiered[Any, Any]
-  private var placedValueInfoConstructorArgumentsChecked = false
-  private var marshallableInfoConstructorArgumentsChecked = false
 
 @experimental
 trait RemoteAccessorSynthesis:
@@ -42,18 +40,24 @@ trait RemoteAccessorSynthesis:
   private val synthesizedAccessorsCache = RemoteAccessorSynthesis.synthesizedAccessorsCache match
     case cache: Cache.Tiered[Symbol, Accessors] @unchecked => cache
 
-  private val placedValueInfoArguments = List(names.infoSignature, names.infoArguments, names.infoResult)
-  private val marshallableInfoArguments = List(names.infoSignature, names.infoBase, names.infoResult, names.infoProxy)
+  private inline def infoArguments(symbol: Symbol, assertArgumentCount: Int) =
+    val paramss = symbol.primaryConstructor.paramSymss
+    assert(paramss.sizeIs == 1)
+    assert(paramss.head.sizeIs == assertArgumentCount)
+    paramss.head map { _.name }
 
-  private inline def checkPlacedValueInfoConstructorArguments() =
-    if !RemoteAccessorSynthesis.placedValueInfoConstructorArgumentsChecked then
-      RemoteAccessorSynthesis.placedValueInfoConstructorArgumentsChecked = true
-      assert((symbols.placedValueInfo.primaryConstructor.paramSymss map { _ map { _.name } }) == List(placedValueInfoArguments))
+  private val placedValueInfoArguments = infoArguments(symbols.placedValueInfo, assertArgumentCount = 3)
+  private val marshallableInfoArguments = infoArguments(symbols.marshallableInfo, assertArgumentCount = 4)
 
-  private inline def checkMarshallableInfoConstructorArguments() =
-    if !RemoteAccessorSynthesis.marshallableInfoConstructorArgumentsChecked then
-      RemoteAccessorSynthesis.marshallableInfoConstructorArgumentsChecked = true
-      assert((symbols.marshallableInfo.primaryConstructor.paramSymss map { _ map { _.name } }) == List(marshallableInfoArguments))
+  private def placedValueInfo(signature: String, arguments: String, result: String) =
+    val args = placedValueInfoArguments lazyZip List(signature, arguments, result) map: (arg, value) =>
+      NamedArg(arg, Literal(StringConstant(value)))
+    New(TypeIdent(symbols.placedValueInfo)).select(symbols.placedValueInfo.primaryConstructor).appliedToArgs(args)
+
+  private def marshallableInfo(signature: String, base: String, result: String, proxy: String) =
+    val args = marshallableInfoArguments lazyZip List(signature, base, result, proxy) map: (arg, value) =>
+      NamedArg(arg, Literal(StringConstant(value)))
+    New(TypeIdent(symbols.marshallableInfo)).select(symbols.marshallableInfo.primaryConstructor).appliedToArgs(args)
 
   def meaningfulArgumentType(tpe: TypeRepr) =
     tpe.typeSymbol != defn.UnitClass && tpe.typeSymbol != defn.NullClass && tpe.typeSymbol != defn.NothingClass
@@ -890,14 +894,13 @@ trait RemoteAccessorSynthesis:
         TypeToken.serializeType(tpe, from) filter:
           TypeToken.deserializeType(_, from) exists { _ =:= tpe }
 
-      val argsHead = Literal(StringConstant(signature))
-      val argsTail = types.typeList.foldRight[Option[List[Term]]](Some(List.empty)):
-        case (tpe, Some(types)) => serializeTypeAndSanityCheck(tpe, module) map { value => Literal(StringConstant(value)) :: types }
+      val typeSignatures = types.typeList.foldRight[Option[List[String]]](Some(List.empty)):
+        case (tpe, Some(types)) => serializeTypeAndSanityCheck(tpe, module) map { _ :: types }
         case _ => None
 
       val locallyScoped = module hasAncestor { symbol => symbol.isMethod || symbol.isField }
 
-      if argsTail.nonEmpty || locallyScoped || signature != abstractSignature then
+      if typeSignatures.nonEmpty || locallyScoped || signature != abstractSignature then
         val symbol = newVal(
           module,
           generateName(),
@@ -907,19 +910,9 @@ trait RemoteAccessorSynthesis:
         trySetThreadUnsafe(symbol)
         injectFieldSymbol(symbol)
 
-        argsHead :: argsTail.toList.flatten match
+        signature :: typeSignatures.toList.flatten match
           case List(signature, base, result, proxy) if !locallyScoped =>
-            checkMarshallableInfoConstructorArguments()
-            val List(marshallableInfoSignature, marshallableInfoBase, marshallableInfoResult, marshallableInfoProxy) = marshallableInfoArguments
-            SymbolMutator.getOrErrorAndAbort.updateAnnotationWithTree(
-              symbol,
-              New(TypeIdent(symbols.marshallableInfo))
-                .select(symbols.marshallableInfo.primaryConstructor)
-                .appliedTo(
-                  NamedArg(marshallableInfoSignature, signature),
-                  NamedArg(marshallableInfoBase, base),
-                  NamedArg(marshallableInfoResult, result),
-                  NamedArg(marshallableInfoProxy, proxy)))
+            SymbolMutator.getOrErrorAndAbort.updateAnnotationWithTree(symbol, marshallableInfo(signature, base, result, proxy))
           case _ =>
 
         val marshallable = Marshallable(symbol, types, signature)
@@ -1148,24 +1141,10 @@ trait RemoteAccessorSynthesis:
                 reference(argumentMarshallable.symbol),
                 reference(resultMarshallable.symbol))
 
-              val argsHead = Literal(StringConstant(signature))
-              val argsTail = List(argumentIdentifier, resultIdentifier) map { identifier => Literal(StringConstant(identifier)) }
-
               val locallyScoped = module hasAncestor { symbol => symbol.isMethod || symbol.isField }
 
-              argsHead :: argsTail match
-                case List(signature, arguments, result) if !locallyScoped =>
-                  checkPlacedValueInfoConstructorArguments()
-                  val List(placedValueSignature, placedValueArguments, placedValueResult) = placedValueInfoArguments
-                  SymbolMutator.getOrErrorAndAbort.updateAnnotationWithTree(
-                    symbol,
-                    New(TypeIdent(symbols.placedValueInfo))
-                      .select(symbols.placedValueInfo.primaryConstructor)
-                      .appliedTo(
-                        NamedArg(placedValueSignature, signature),
-                        NamedArg(placedValueArguments, arguments),
-                        NamedArg(placedValueResult, result)))
-                case _ =>
+              if !locallyScoped then
+                SymbolMutator.getOrErrorAndAbort.updateAnnotationWithTree(symbol, placedValueInfo(signature, argumentIdentifier, resultIdentifier))
 
               val key = original getOrElse:
                 val key = anonymousPlacedIndex
