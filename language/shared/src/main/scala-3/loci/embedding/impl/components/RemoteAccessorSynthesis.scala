@@ -62,9 +62,14 @@ trait RemoteAccessorSynthesis:
   def meaningfulArgumentType(tpe: TypeRepr) =
     tpe.typeSymbol != defn.UnitClass && tpe.typeSymbol != defn.NullClass && tpe.typeSymbol != defn.NothingClass
 
-  def synthesizeModuleSignature(module: Symbol) =
+  def synthesizeModuleSignature(module: Symbol): (Symbol, Symbol) =
     synthesizedModuleSignatureCache.getOrElseUpdate(module):
-      val hasMultitierParent = module.typeRef.baseClasses.tail exists isMultitierModule
+      val hasMultitierParent = module.typeRef.baseClasses.tail.foldLeft(false): (hasMultitierParent, parent) =>
+        if isMultitierModule(parent) then
+          synthesizeModuleSignature(parent)
+          true
+        else
+          hasMultitierParent
       val flags = Flags.Lazy | (if hasMultitierParent then Flags.Override else Flags.EmptyFlags)
       val identifier = newVal(module, names.module, TypeRepr.of[String], flags, Symbol.noSymbol)
       val signature = newVal(module, names.signature, types.moduleSignature, flags, Symbol.noSymbol)
@@ -72,10 +77,16 @@ trait RemoteAccessorSynthesis:
       SymbolMutator.getOrErrorAndAbort.enter(module, signature)
       (identifier, signature)
 
-  def synthesizePeerSignature(module: Symbol, peer: Symbol) =
+  def synthesizePeerSignature(module: Symbol, peer: Symbol): (Symbol, Symbol) =
     synthesizedPeerSignatureCache.getOrElseUpdate(module, peer):
-      val overridden = (peer.allOverriddenSymbols map { _.owner }).toSet + peer.owner
-      val isOverriddingPeer = module.typeRef.baseClasses.tail exists { overridden contains _ }
+      val overridden = (peer.allOverriddenSymbols map { peer => peer.owner -> peer }).toMap + (peer.owner -> peer)
+      val isOverriddingPeer = module.typeRef.baseClasses.tail.foldLeft(false): (isOverriddingPeer, parent) =>
+        if isMultitierModule(parent) then
+          val peer = overridden.get(parent)
+          peer foreach { synthesizePeerSignature(parent, _) }
+          isOverriddingPeer || peer.isDefined
+        else
+          isOverriddingPeer
       val overridingFlags = if isOverriddingPeer then Flags.Override else Flags.EmptyFlags
       val info = ByNameType(symbols.map.typeRef.appliedTo(List(types.peerSignature, types.peerTie)))
       val signature = newVal(module, s"${names.peerSignature}${peer.name}", types.peerSignature, Flags.Lazy | overridingFlags, Symbol.noSymbol)

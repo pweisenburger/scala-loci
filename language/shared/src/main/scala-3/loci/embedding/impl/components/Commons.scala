@@ -501,13 +501,12 @@ trait Commons:
   def termAsSelection(term: Term, owner: Symbol): Option[Select] = term match
     case term @ Select(_, _) =>
       Some(term)
-    case term @ Ident(_) if term.symbol.owner != defn.RootClass && !term.symbol.owner.isPackageDef =>
-      if term.symbol.owner.isClassDef && term.symbol.owner.isModuleDef then
+    case term @ Ident(_) if term.symbol.owner != defn.RootClass && !term.symbol.owner.isPackageDef && term.symbol.owner.isClassDef =>
+      if term.symbol.owner.isModuleDef then
         Some(Ref(term.symbol.owner.companionModule).select(term.symbol))
-      else if term.symbol.owner.isClassDef && (owner hasAncestor term.symbol.owner) then
-        Some(This(term.symbol.owner).select(term.symbol))
       else
-        None
+        owner findAncestor { _.typeRef.baseClasses contains term.symbol.owner } map: symbol =>
+          This(symbol).select(term.symbol)
     case _ =>
       None
 

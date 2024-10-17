@@ -305,7 +305,8 @@ trait PlacedValueSynthesis:
   def synthesizedStatement(module: Symbol, peer: Symbol, index: Int): Option[SynthesizedStatements] =
     synthesizedStatementsCache.getOrElseUpdate(module, (peer, index)):
       if peer != defn.AnyClass then
-        val name = s"<${names.placedStatement} $index of ${fullName(peer)}>"
+        val separator = if module.isType && !module.isPackageDef && !module.isModuleDef then "#" else "."
+        val name = s"<${names.placedStatement} $index of ${fullName(module)}$separator${peer.name}>"
         val universalValues = synthesizedPlacedValues(module, defn.AnyClass).symbol
         val placedValues = synthesizedPlacedValues(module, peer).symbol
         val unaryProcedureType = MethodType(List.empty)(_ => List.empty, _ => TypeRepr.of[Unit])
