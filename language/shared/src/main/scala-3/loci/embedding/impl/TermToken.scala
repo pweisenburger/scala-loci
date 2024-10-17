@@ -384,7 +384,7 @@ object TermToken:
       builder ++= ")"
 
     def printAnnotations(symbol: Symbol): Unit =
-      val annotations = symbol.annotations.filter: term =>
+      val annotations = symbol.annotations filter: term =>
         val symbol = term.tpe.typeSymbol
         symbol != forceInline && symbol.maybeOwner != internal
       if annotations.nonEmpty then

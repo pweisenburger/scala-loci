@@ -125,6 +125,11 @@ trait Peers:
         Option.unless(isMultitierModule(peerType.typeSymbol.owner)):
           (s"Peer ${prettyType(peerType.prettyShowFrom(module))} is not defined in a multitier module.", pos)
 
+      def anyTieMessage =
+        ties collectFirst:
+          case (tie, _) if tie.typeSymbol == defn.AnyClass =>
+            (s"Ties to ${prettyType("Any")} peer are not permitted.", pos)
+
       def referencedPeersNestedModuleMessage =
         def thisTypeIfPossible(tpe: TypeRepr) = tpe match
           case tpe: TypeRef if tpe.typeSymbol.isClassDef => ThisType(tpe.typeSymbol)
@@ -227,6 +232,7 @@ trait Peers:
                  pos)
 
       peerModuleMessage orElse
+      anyTieMessage orElse
       referencedPeersNestedModuleMessage orElse
       widenedBaseModulePeerTieMessage orElse
       widenedSubPeerTieMessage toLeft

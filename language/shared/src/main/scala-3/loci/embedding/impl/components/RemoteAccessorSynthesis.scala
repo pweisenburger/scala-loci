@@ -483,7 +483,7 @@ trait RemoteAccessorSynthesis:
     synthesizeAllPlacedAccessors(symbol, includeFirst = true)
 
   def synthesizeAllPeerSignatures(symbol: Symbol): Map[Symbol, Symbol] =
-    (synthesizeAccessors(symbol).peers.view.mapValues { (signature, _ , _, _) => signature }).toMap
+    (synthesizeAccessors(symbol).peers.view mapValues { (signature, _ , _, _) => signature }).toMap
 
   def synthesizeAccessors(symbol: Symbol): Accessors =
     val module = if symbol.moduleClass.exists then symbol.moduleClass else symbol

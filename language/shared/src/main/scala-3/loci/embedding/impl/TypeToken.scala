@@ -599,8 +599,6 @@ object TypeToken:
       None
     end separateNested
 
-    val `null.asInstanceOf` = Select.unique(Literal(NullConstant()), "asInstanceOf")
-
     val prefixPathMarker = token("\\")
 
     def markPrefixPath(tokens: List[TypeToken]) = tokens match
