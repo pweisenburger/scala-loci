@@ -181,16 +181,49 @@ trait RemoteAccessorSynthesis:
     def apply(tree: Term): Transmittable =
       Transmittable(tree, TransmittableTypes(tree.tpe), transmittableSignature(tree))
 
-  private case class Marshallable(symbol: Symbol, types: MarshallableTypes, signature: String)
+  private case class Marshallable(symbol: Symbol, types: MarshallableTypes, basicTypes: MarshallableTypes, signature: String)
 
   private object Marshallable:
     def apply(symbol: Symbol, module: Symbol): Option[Marshallable] =
       marshallableInfo(symbol) map: (signature, _, _, _) =>
-        Marshallable(symbol, MarshallableTypes(ThisType(module).select(symbol)), signature)
+        val approximator = BasicTypeApproximator(module, symbol.owner)
+        val types = MarshallableTypes(ThisType(module).select(symbol))
+        val basicTypes = MarshallableTypes(approximator.transform(types.base), approximator.transform(types.result), approximator.transform(types.proxy))
+        Marshallable(symbol, types, basicTypes, signature)
     def predefined(symbol: Symbol): Marshallable =
-      Marshallable(symbol, MarshallableTypes(symbol.typeRef), unknownSignature)
+      val types = MarshallableTypes(symbol.typeRef)
+      Marshallable(symbol, types, types, unknownSignature)
 
-  private class AccessorResolution(var transmittable: Option[Transmittable], var marshallable: Option[Option[(Marshallable, Either[Symbol, ValDef])]])
+  private class AccessorResolution(var transmittable: Option[Transmittable], var marshallable: Option[Option[(Marshallable, Either[Symbol, ValDef])]]):
+    def this() = this(None, None)
+
+  private class BasicTypeApproximator(viewpoint: Symbol, base: Symbol) extends TypeMap(quotes):
+    def viewFromBase(tpe: TypeRepr): Option[TypeRepr] = tpe match
+      case AnnotatedType(underlying, annotation) =>
+        viewFromBase(underlying) map { AnnotatedType(_, annotation) }
+      case Refinement(parent, name, info) =>
+        viewFromBase(parent) map { Refinement(_, name, transform(info)) }
+      case TermRef(qualifier, name) =>
+        viewFromBase(qualifier) collect Function.unlift: qualifier =>
+          val symbol = qualifier.typeSymbol.fieldMember(name)
+          Option.when(symbol.exists) { qualifier.select(symbol) }
+      case TypeRef(qualifier, name) =>
+        viewFromBase(qualifier) collect Function.unlift: qualifier =>
+          val symbol = qualifier.typeSymbol.typeMember(name)
+          Option.when(symbol.exists) { qualifier.select(symbol) }
+      case ThisType(tref) if tref.typeSymbol == viewpoint =>
+        Some(ThisType(base))
+      case _ =>
+        None
+
+    override def transform(tpe: TypeRepr) = tpe match
+      case tpe: TypeRef if tpe.typeSymbol.isType && !tpe.typeSymbol.isClassDef =>
+        ThisType(viewpoint).memberType((viewFromBase(tpe) getOrElse tpe).typeSymbol) match
+          case TypeBounds(_, hi) => transform(hi)
+          case _ => super.transform(tpe)
+      case _ =>
+        super.transform(tpe)
+  end BasicTypeApproximator
 
   sealed class CachedTypeSeqMap[+T]:
     protected var map: mutable.Map[TypeRepr, T] @uncheckedVariance = mutable.Map.empty
@@ -333,8 +366,10 @@ trait RemoteAccessorSynthesis:
 
       extension (self: Result)
         def asTransmittable(allowFailureForTypeParameters: Boolean) = self match
-          case Success(term) => Right(Transmittable(term))
-          case Failure(message) => Left(message)
+          case Success(term) =>
+            Right(Transmittable(term))
+          case Failure(message) =>
+            Left(message)
           case FailureOnTypeParameter(message, term) =>
             Either.cond(
               allowFailureForTypeParameters,
@@ -520,7 +555,10 @@ trait RemoteAccessorSynthesis:
   end synthesizeAccessors
 
   private def synthesizeAccessorsFromTree(module: Symbol, tree: ClassDef): Accessors =
+    val approximator = BasicTypeApproximator(module, module)
+
     val mangledName = mangledSymbolName(module)
+
     val signaturePrefix =
       if module.isModuleDef then
         TypeToken(implementationForm(module)) :: TypeToken.` ` :: TypeToken.typeSignature(module.termRef)
@@ -806,7 +844,13 @@ trait RemoteAccessorSynthesis:
               PlacementInfo(tpe.resultType) flatMap: placementInfo =>
                 if !placementInfo.modality.local then
                   overridden ++= decl.allOverriddenSymbols
-                  Option.when(accessorGeneration == Forced || !(inheritedPlacedAccessors contains decl)):
+
+                  def sameTypeInOwner =
+                    val tpeInOwner = ThisType(decl.owner).memberType(decl)
+                    PlacementInfo(tpeInOwner) forall: placementInfoInOwner =>
+                      tpe.withResultType(placementInfo.valueType) =:= tpeInOwner.withResultType(placementInfoInOwner.valueType)
+
+                  Option.when(accessorGeneration == Forced || !sameTypeInOwner):
                     val (paramSymss, info) =
                       if hasSyntheticMultitierContextArgument(decl) then
                         (decl.paramSymss.init, dropLastArgumentList(tpe))
@@ -926,7 +970,8 @@ trait RemoteAccessorSynthesis:
             SymbolMutator.getOrErrorAndAbort.updateAnnotationWithTree(symbol, marshallableInfo(signature, base, result, proxy))
           case _ =>
 
-        val marshallable = Marshallable(symbol, types, signature)
+        val basicTypes = MarshallableTypes(approximator.transform(types.base), approximator.transform(types.result), approximator.transform(types.proxy))
+        val marshallable = Marshallable(symbol, types, basicTypes, signature)
         val definition = ValDef(symbol, Some(rhs.fold(Literal(NullConstant()).select(symbols.asInstanceOf).appliedToType(symbol.info)) { _.changeOwner(symbol) }))
         Right(marshallable, definition)
       else
@@ -979,16 +1024,27 @@ trait RemoteAccessorSynthesis:
               accessor.marshallable = Some(None)
               Right(None)
 
-      def conformsToMarshallable(types: MarshallableTypes) =
-        required.base =:= types.base &&
-        (required.maybeResult forall { _ =:= types.result }) &&
-        (required.maybeProxy forall { _ =:= types.proxy })
+      def conformsToRequiredMarshallable(types: MarshallableTypes) =
+        required.base <:< types.base &&
+        (required.maybeResult forall { types.result <:< _ }) &&
+        (required.maybeProxy forall { types.proxy <:< _ })
+
+      def conformsToMarshallableTypes(types: MarshallableTypes, marshallableTypes: MarshallableTypes) =
+        marshallableTypes.base <:< types.base &&
+        types.result <:< marshallableTypes.result &&
+        types.proxy <:< marshallableTypes.proxy
+
+      def conformsToMarshallable(marshallable: Marshallable) =
+        conformsToRequiredMarshallable(marshallable.types) &&
+        approximator.transform(required.base) <:< marshallable.basicTypes.base &&
+        (required.maybeResult forall { marshallable.basicTypes.result <:< approximator.transform(_) }) &&
+        (required.maybeProxy forall { marshallable.basicTypes.proxy <:< approximator.transform(_) })
 
       def conformsToPredefinedMarshallable(base: TypeRepr) =
-        conformsToMarshallable(MarshallableTypes(base, base, symbols.future.typeRef.appliedTo(base)))
+        conformsToRequiredMarshallable(MarshallableTypes(base, base, symbols.future.typeRef.appliedTo(base)))
 
       def checkTransmittableConformation[T](types: TransmittableTypes)(body: => Either[String, T]) =
-        if conformsToMarshallable(types.asMarshallableTypes) then
+        if conformsToRequiredMarshallable(types.asMarshallableTypes) then
           body
         else
           val message = s"${prettyType(types.base.prettyShow)} is not transmittable"
@@ -1019,7 +1075,6 @@ trait RemoteAccessorSynthesis:
                     accessorResolutionTypeMap.addNewTypeEntry(transmittable.types.base, AccessorResolution(transmittable = Some(transmittable), marshallable = None))
           else
             None
-        end initialResolution
 
         val initialResolutionFailure =
           initialResolution flatMap { _.left.toOption }
@@ -1028,7 +1083,7 @@ trait RemoteAccessorSynthesis:
           initialResolution flatMap { _.toOption } orElse accessorResolutionTypeMap.lookupType(required.base) match
             case Some(accessor) =>
               accessor.marshallable match
-                case Some(Some(marshallable, Left(_))) if !conformsToMarshallable(marshallable.types) =>
+                case Some(Some(marshallable, Left(_))) if !conformsToMarshallable(marshallable) =>
                   accessor.marshallable = None
                   Left(Some(accessor))
                 case Some(Some(marshallable, _)) =>
@@ -1069,16 +1124,14 @@ trait RemoteAccessorSynthesis:
                       val marshallable = marshallables.head
                       Option.unless(name contains marshallable.symbol.name):
                         val conforms =
-                          conformsToMarshallable(marshallable.types) &&
+                          conformsToMarshallable(marshallable) &&
+                          conformsToMarshallableTypes(marshallable.types, transmittable.types.asMarshallableTypes) &&
                           (accessorGeneration != Forced || marshallable.signature == transmittable.signature && marshallable.signature != unknownSignature)
                         Option.when(conforms):
                           accessor.marshallable = Some(Some(marshallable, Left(marshallable.symbol)))
                           Right(() => Right(Some(marshallable)))
 
                   marshallable.flatten getOrElse:
-                    if marshallable.isEmpty && transmittable.signature == abstractSignature && allowSkippingAbstract then
-                      Right(() => Right(None))
-                    else
                       marshallableConstruction(transmittable) map: rhs =>
                         () => generateMarshallable(accessor, transmittable, rhs)
 
@@ -1089,9 +1142,9 @@ trait RemoteAccessorSynthesis:
                       val marshallable = marshallables.head
                       val conforms =
                         !(name contains marshallable.symbol.name) &&
-                        conformsToMarshallable(marshallable.types)
+                        conformsToMarshallable(marshallable)
                       Option.when(conforms):
-                        val resolution = accessor getOrElse accessorResolutionTypeMap.addNewTypeEntry(required.base, AccessorResolution(transmittable = None, marshallable = None))
+                        val resolution = accessor getOrElse accessorResolutionTypeMap.addNewTypeEntry(required.base, AccessorResolution())
                         resolution.marshallable = Some(Some(marshallable, Left(marshallable.symbol)))
                         Right(() => Right(Some(marshallable)))
                   else
@@ -1101,7 +1154,7 @@ trait RemoteAccessorSynthesis:
                   val result =
                     initialResolutionFailure map { Left(_) } getOrElse:
                       Resolution.resolveTransmittable(required.base, allowResolutionFailureForTypeParameters) flatMap: transmittable =>
-                        val resolution = accessor getOrElse accessorResolutionTypeMap.addNewTypeEntry(required.base, AccessorResolution(transmittable = None, marshallable = None))
+                        val resolution = accessor getOrElse accessorResolutionTypeMap.addNewTypeEntry(required.base, AccessorResolution())
                         resolution.transmittable = Some(transmittable)
                         resolution.marshallable = None
                         checkTransmittableConformation(transmittable.types):
@@ -1236,7 +1289,7 @@ trait RemoteAccessorSynthesis:
 
       inheritedMarshallables.iterator foreach:
         _ foreach:
-          case Marshallable(symbol, types, signature) =>
+          case Marshallable(symbol, types, _, signature) =>
             if signature == abstractSignature then
               val resolvedMarshallable = generateMarshallable(
                 RequiredMarshallable.Proxy(types.base, types.result, types.proxy),
