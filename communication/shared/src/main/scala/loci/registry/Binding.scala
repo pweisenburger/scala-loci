@@ -24,7 +24,7 @@ trait BindingBuilder[T, R] {
 }
 
 trait ValueBindingBuilder {
-  implicit def value[T, P](implicit res: Marshallable[T, _, P])
+  implicit def value[T, P](implicit res: Marshallable.Resolution[T, _, P])
       : BindingBuilder.Value[T, P] =
     new BindingBuilder.Value[T, P] {
       def apply(bindingName: String) = new Binding[T, P] {

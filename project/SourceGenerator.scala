@@ -160,10 +160,10 @@ object SourceGenerator {
 
         val marshallables =
           if (i == 0) s"""
-            |      res: Marshallable[R, _, P]"""
+            |      res: Marshallable.Resolution[R, _, P]"""
           else s"""
-            |      arg: Marshallable[($argTypes), ($argTypes), _],
-            |      res: Marshallable[R, _, P]"""
+            |      arg: Marshallable.Resolution[($argTypes), ($argTypes), _],
+            |      res: Marshallable.Resolution[R, _, P]"""
 
         val marshalling =
           if (i == 0) "MessageBuffer.empty"
