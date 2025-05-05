@@ -89,10 +89,10 @@ trait Commons:
     val transmittable = TypeRepr.of[transmitter.Transmittable.Resolution[?, ?, ?, ?, ?]].typeSymbol
     val serializable = TypeRepr.of[serializer.Serializable[?]].typeSymbol
     val marshallable = TypeRepr.of[transmitter.Marshallable[?, ?, ?]].typeSymbol
-    val marshallableResolution = '{ transmitter.Marshallable.marshallable(?, ?, ?) }.symbol
-    val marshallableUnit = '{ transmitter.Marshallable.unit }.symbol
-    val marshallableNull = '{ transmitter.Marshallable.`null` }.symbol
-    val marshallableNothing = '{ transmitter.Marshallable.nothing }.symbol
+    val marshallableResolution = '{ transmitter.Marshallable.Resolution.marshallable(?, ?, ?) }.symbol
+    val marshallableUnit = '{ transmitter.Marshallable.Resolution.unit }.symbol
+    val marshallableNull = '{ transmitter.Marshallable.Resolution.`null` }.symbol
+    val marshallableNothing = '{ transmitter.Marshallable.Resolution.nothing }.symbol
     val marshal = '{ ?[transmitter.Marshallable[?, ?, ?]].marshal(?, ?) }.symbol
     val unmarshal = '{ ?[transmitter.Marshallable[?, ?, ?]].unmarshal(?[MessageBuffer], ?) }.symbol
     val transmission = TypeRepr.of[language.transmitter.Transmission.type].typeSymbol

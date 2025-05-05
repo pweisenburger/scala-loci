@@ -898,8 +898,7 @@ trait RemoteAccessorSynthesis:
         contextBuilder(transmittable.types) flatMap: builder =>
           resolveSerializable(transmittable.types.intermediate) map: serializer =>
             Some:
-              Ref(types.marshallable.typeSymbol.companionModule)
-                .select(symbols.marshallableResolution)
+              Ref(symbols.marshallableResolution)
                 .appliedToTypes(transmittable.types.typeList)
                 .appliedTo(transmittable.tree, serializer, builder)
       else
@@ -1194,7 +1193,7 @@ trait RemoteAccessorSynthesis:
               injectFieldSymbol(symbol)
 
               inline def reference(symbol: Symbol) =
-                if symbol.owner == types.marshallable.typeSymbol.companionModule.moduleClass then
+                if symbol.owner.owner == types.marshallable.typeSymbol.companionModule.moduleClass then
                   Ref(symbol)
                 else
                   This(module).select(symbol)
