@@ -395,12 +395,41 @@ trait RemoteAccessorSynthesis:
         case _ =>
           foldOverTree(failure, tree)(owner)
 
+    private class AbstractTypeInfosMasker(symbolMutator: SymbolMutator) extends TypeMap(quotes):
+      private val originalInfos = mutable.ListBuffer.empty[(Symbol, TypeRepr)]
+
+      override def transform(tpe: TypeRepr) =
+        val symbol = tpe match
+          case tpe: TermRef => Some(tpe.termSymbol)
+          case tpe: TypeRef => Some(tpe.typeSymbol)
+          case _ => None
+        symbol foreach: symbol =>
+          symbol.info match
+            case info @ TypeBounds(low, hi) if !(low =:= hi) =>
+               symbolMutator.setInfo(symbol, TypeBounds.empty)
+               originalInfos += symbol -> info
+            case info =>
+              transform(info)
+        super.transform(tpe)
+
+      def unmask() =
+        originalInfos foreach { symbolMutator.setInfo(_, _) }
+        originalInfos.clear()
+    end AbstractTypeInfosMasker
+
+    private def maskAbstractTypeInfos[T](tpe: TypeRepr)(body: => T) =
+      SymbolMutator.get.fold(body): symbolMutator =>
+        val abstractTypeInfosMasker = AbstractTypeInfosMasker(symbolMutator)
+        abstractTypeInfosMasker.transform(tpe)
+        try body
+        finally abstractTypeInfosMasker.unmask()
+
     private val cache = MutableCachedTypeSeqMap[Result]
 
     def resolve(tpe: TypeRepr, message: String) =
       cache.lookupType(tpe) getOrElse:
         val result =
-          noMacroCheck(Implicits.search(tpe)) match
+          noMacroCheck(maskAbstractTypeInfos(tpe)(Implicits.search(tpe))) match
             case result: ImplicitSearchSuccess => Result(result.tree)
             case _ => Result.Failure(message)
         cache.addNewTypeEntry(tpe, result)
