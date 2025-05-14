@@ -258,13 +258,25 @@ trait Commons:
         case tpe: TermRef if tpe.termSymbol.isModuleDef => tpe.qualifier.select(tpe.typeSymbol)
         case _ => tpe
 
+      def addPrefix(prefix: String): Unit =
+        if prefix.nonEmpty && prefix.head != '<' && prefix != "." then prefixes += prefix
+
       def addPrefixes(tpe: TypeRepr): Unit =
         val prefix = showableType(tpe)
-        prefixes +=
-          s"${prefix.safeShow("", printer)}." +=
-          s"${prefix.safeShow("", Printer.CompilerStyleTypeReprCode)}." +=
-          s"${prefix.safeShow("", Printer.TypeReprCode)}." +=
-          s"${prefix.safeShow("", Printer.TypeReprAnsiCode)}."
+        addPrefix(s"${prefix.safeShow("", printer)}.")
+        addPrefix(s"${prefix.safeShow("", Printer.CompilerStyleTypeReprCode)}.")
+        addPrefix(s"${prefix.safeShow("", Printer.TypeReprCode)}.")
+        addPrefix(s"${prefix.safeShow("", Printer.TypeReprAnsiCode)}.")
+        if prefix.typeSymbol.isClassDef then
+          prefix.baseClasses.tail foreach { base => addPrefixes(base.typeRef) }
+        prefix match
+          case prefix: NamedType =>
+            addPrefix(s"${prefix.name}.this.")
+            addPrefix(s"${prefix.name}${prettyType(".this")}.")
+            addPrefix(s"${prefix.name}.${prettyType("this")}.")
+            addPrefix(s"${prettyType(prefix.name)}.${prettyType("this")}.")
+            addPrefix(s"${prettyType(s"${prefix.name}.this")}.")
+          case _ =>
 
       object prefixesCollector extends TypeMap(quotes):
         override def transform(tpe: TypeRepr) = tpe match
@@ -277,7 +289,8 @@ trait Commons:
       if symbol.exists then
         prefixesCollector.transform(tpe)
         addPrefixes(symbol.typeRef)
-        addPrefixes(ThisType(symbol.owner).select(symbol))
+        if symbol.owner.isClassDef then
+          addPrefixes(ThisType(symbol.owner).select(symbol))
 
       addPrefixes(Symbol.requiredPackage("loci").typeRef)
       addPrefixes(Symbol.requiredPackage("loci.language").typeRef)

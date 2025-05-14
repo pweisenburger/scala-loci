@@ -37,7 +37,7 @@ trait Checking:
       val treeClass = Class.forName("dotty.tools.dotc.ast.Trees$Tree")
       val megaPhaseClass = Class.forName("dotty.tools.dotc.transform.MegaPhase")
       val miniPhaseClass = Class.forName("dotty.tools.dotc.transform.MegaPhase$MiniPhase")
-      val miniPhaseArrayClass = miniPhaseClass.arrayType()
+      val miniPhaseArrayClass = Array.newInstance(miniPhaseClass, 0).getClass
       val elimRepeatedClass = Class.forName("dotty.tools.dotc.transform.ElimRepeated")
       val refChecksClass = Class.forName("dotty.tools.dotc.typer.RefChecks")
 
