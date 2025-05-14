@@ -194,13 +194,7 @@ trait Checking:
 
     module.body foreach:
       case stat: Definition =>
-        if (stat.name startsWith names.loci) ||
-           ((stat.name startsWith s"<${names.placedValue}") ||
-            (stat.name startsWith s"<${names.placedPrivateValue}") ||
-            (stat.name startsWith s"<${names.placedStatement}") ||
-            (stat.name startsWith s"<${names.placedValues}") ||
-            (stat.name startsWith s"<${names.outerPlacedValues}")) &&
-            (stat.name.lastOption contains '>') then
+        if isMultitierName(stat.name) then
           errorAndCancel("Illegal name in multitier module.", stat.posInUserCode.firstCodeLine)
         else if stat.symbol.isParamAccessor then
           stat.symbol.info match

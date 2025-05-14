@@ -204,6 +204,15 @@ trait Commons:
     val placedValues = "placed values"
     val outerPlacedValues = "placed values"
 
+  def isMultitierName(name: String) =
+    (name startsWith names.loci) ||
+      ((name startsWith s"<${names.placedValue}") ||
+       (name startsWith s"<${names.placedPrivateValue}") ||
+       (name startsWith s"<${names.placedStatement}") ||
+       (name startsWith s"<${names.placedValues}") ||
+       (name startsWith s"<${names.outerPlacedValues}")) &&
+       (name.lastOption contains '>')
+
   object Tuple extends TupleExtractor(quotes)
 
   object MaybeTyped:

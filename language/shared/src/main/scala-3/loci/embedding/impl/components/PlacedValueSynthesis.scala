@@ -226,15 +226,12 @@ trait PlacedValueSynthesis:
           universal
 
         val setter =
-          if (symbol.flags is Flags.Mutable | Flags.PrivateLocal) &&
-             symbol.isField &&
-             !symbol.isFieldAccessor &&
-             !symbol.setter.exists then
+          Option.when((symbol.flags is Flags.Mutable | Flags.PrivateLocal) && symbol.isField && !symbol.isFieldAccessor && !symbol.setter.exists):
             val setterInfo = MethodType(List("x$1"))(_ => List(info), _ => TypeRepr.of[Unit])
-            val setterFlags = if flags is Flags.Synthetic then Flags.Synthetic else Flags.EmptyFlags
-            Some(newMethod(universalValues, s"${universalName}_=", setterInfo, setterFlags | Flags.FieldAccessor | Flags.Method | Flags.Mutable, Symbol.noSymbol))
-          else
-            None
+            val setterName = s"${universalName}_="
+            universalValues.declaredMethod(setterName) find { _.info =:= setterInfo } getOrElse:
+              val setterFlags = if flags is Flags.Synthetic then Flags.Synthetic else Flags.EmptyFlags
+              newMethod(universalValues, setterName, setterInfo, setterFlags | Flags.FieldAccessor | Flags.Method | Flags.Mutable, Symbol.noSymbol)
 
         val definition =
           if !universalOnly then
@@ -246,14 +243,14 @@ trait PlacedValueSynthesis:
                   placed
               SynthesizedDefinitions(symbol, universal, None, setter, impls)
             else
-              val methodType = MethodType(List.empty)(_ => List.empty, _ => info)
+              val methodInfo = MethodType(List.empty)(_ => List.empty, _ => info)
 
-              val universalInit = universalValues.declaredField(placedName) orElse:
-                newMethod(universalValues, placedName, methodType, Flags.Synthetic, Symbol.noSymbol)
+              val universalInit = universalValues.declaredMethod(placedName) find { _.info =:= methodInfo } getOrElse:
+                newMethod(universalValues, placedName, methodInfo, Flags.Synthetic, Symbol.noSymbol)
 
               val implsInit = placedValues map: placedValues =>
-                placedValues.declaredField(placedName) orElse:
-                  val placedInit = newMethod(placedValues, placedName, methodType, Flags.Synthetic | Flags.Override, Symbol.noSymbol)
+                placedValues.declaredMethod(placedName) find { _.info =:= methodInfo } getOrElse:
+                  val placedInit = newMethod(placedValues, placedName, methodInfo, Flags.Synthetic | Flags.Override, Symbol.noSymbol)
                   copyAnnotations(symbol, placedInit, decrementContextResultCount, sameTargetName = false)
                   placedInit
 
@@ -309,14 +306,14 @@ trait PlacedValueSynthesis:
         val name = s"<${names.placedStatement} $index of ${fullName(module)}$separator${peer.name}>"
         val universalValues = synthesizedPlacedValues(module, defn.AnyClass).symbol
         val placedValues = synthesizedPlacedValues(module, peer).symbol
-        val unaryProcedureType = MethodType(List.empty)(_ => List.empty, _ => TypeRepr.of[Unit])
+        val info = MethodType(List.empty)(_ => List.empty, _ => TypeRepr.of[Unit])
 
         synthesizedStatementsCache.getOrElseUpdate(module, (peer, index)):
-          val binding = universalValues.declaredField(name) orElse:
-            newMethod(universalValues, name, unaryProcedureType, Flags.Synthetic, Symbol.noSymbol)
+          val binding = universalValues.declaredMethod(name) find { _.info =:= info } getOrElse:
+            newMethod(universalValues, name, info, Flags.Synthetic, Symbol.noSymbol)
 
-          val impl = placedValues.declaredField(name) orElse:
-            newMethod(placedValues, name, unaryProcedureType, Flags.Synthetic | Flags.Override, Symbol.noSymbol)
+          val impl = placedValues.declaredMethod(name) find { _.info =:= info } getOrElse:
+            newMethod(placedValues, name, info, Flags.Synthetic | Flags.Override, Symbol.noSymbol)
 
           val statement = Some(SynthesizedStatements(binding, List(impl)))
           synthesizedStatementsCache.update(binding, (), statement)
@@ -327,8 +324,9 @@ trait PlacedValueSynthesis:
   end synthesizedStatement
 
   def synthesizeMember(symbol: Symbol): Boolean =
-    isMultitierNestedPath(symbol.maybeOwner) &&
-    (symbol.isTerm && !symbol.isModuleDef && !symbol.isParamAccessor || (symbol.isModuleDef && symbol.isClassDef))
+    (!isMultitierName(symbol.name) || (symbol.name startsWith names.block)) &&
+    (symbol.isTerm && !symbol.isModuleDef && !symbol.isParamAccessor || (symbol.isModuleDef && symbol.isClassDef)) &&
+    isMultitierNestedPath(symbol.maybeOwner)
 
   def synthesizedPlacedValues(symbol: Symbol): Option[SynthesizedPlacedValues] =
     synthesizedPlacedValuesCache.get(symbol, ())
@@ -386,7 +384,7 @@ trait PlacedValueSynthesis:
 
           val indices = mutable.Map.empty[Symbol, Int]
 
-          val declarations =
+          val decls =
             preprocessedTree match
               case Some(ClassDef(_, _, _, _, body)) =>
                 body flatMap:
@@ -406,19 +404,14 @@ trait PlacedValueSynthesis:
                   case _ =>
                     List.empty
               case _ =>
-                List.empty
-
-          val decls =
-            if declarations.isEmpty then
-              module.declarations flatMap: decl =>
-                if synthesizeMember(decl) then
-                  synthesizedDefinitions(decl).fold(List.empty):
-                    case SynthesizedDefinitions(_, binding, init, setter, impls) =>
-                      collectDeclarations(binding :: init.toList ++ setter.toList ++ impls)
-                else
-                  List.empty
-            else
-              declarations
+                module.declarations flatMap: decl =>
+                  if synthesizeMember(decl) then
+                    synthesizedDefinitions(decl).fold(List.empty):
+                      case SynthesizedDefinitions(_, binding, init, setter, impls) =>
+                        collectDeclarations(binding :: init.toList ++ setter.toList ++ impls)
+                  else
+                    List.empty
+          end decls
 
           if peer == defn.AnyClass &&
              (module.owner hasAncestor isMultitierModule) &&
@@ -430,20 +423,31 @@ trait PlacedValueSynthesis:
             decls
         end symbolDecls
 
-        val symbolFlags = Flags.Synthetic | Flags.Trait | (if peer != defn.AnyClass then Flags.NoInits else Flags.EmptyFlags)
         val symbolName = if peer == defn.AnyClass then s"<${names.placedValues} of $form $name>" else s"<${names.placedValues} on $name$separator${peer.name}>"
         val symbolMangledName = if peer == defn.AnyClass then mangledName else s"$mangledName$$${peer.name}"
-        val symbol = newClass(module, if canMakeTargetName then symbolName else symbolMangledName, symbolFlags, parents, symbolDecls, selfType)
 
-        tryMakeTargetName(symbol, symbolMangledName)
-        module.declaredType(symbolName).headOption orElse module.declaredType(symbolMangledName).headOption match
-          case Some(declared) => SymbolMutator.getOrErrorAndAbort.replace(module, declared, symbol)
-          case _ => SymbolMutator.getOrErrorAndAbort.enter(module, symbol)
+        val symbol =
+          module.declaredType(symbolName).headOption orElse module.declaredType(symbolMangledName).headOption match
+            case Some(symbol) =>
+              val decls = symbol.declarations.toSet
+              symbolDecls(symbol) foreach: decl =>
+                if !(decls contains decl) then
+                  SymbolMutator.getOrErrorAndAbort.enter(symbol, decl)
+              symbol
 
-        val (paramNames, paramTypes) = (symbol.declaredFields collect { case symbol if symbol.isParamAccessor => symbol.name -> symbol.info }).unzip
-        if paramNames.nonEmpty then
-          val tpe = MethodType(paramNames)(_ => paramTypes, _ => symbol.typeRef)
-          SymbolMutator.getOrErrorAndAbort.setInfo(symbol.primaryConstructor, tpe)
+            case _ =>
+              val symbolFlags = Flags.Synthetic | Flags.Trait | (if peer != defn.AnyClass then Flags.NoInits else Flags.EmptyFlags)
+              val symbol = newClass(module, if canMakeTargetName then symbolName else symbolMangledName, symbolFlags, parents, symbolDecls, selfType)
+              tryMakeTargetName(symbol, symbolMangledName)
+
+              val (paramNames, paramTypes) = (symbol.declaredFields collect { case symbol if symbol.isParamAccessor => symbol.name -> symbol.info }).unzip
+              if paramNames.nonEmpty then
+                val tpe = MethodType(paramNames)(_ => paramTypes, _ => symbol.typeRef)
+                SymbolMutator.getOrErrorAndAbort.setInfo(symbol.primaryConstructor, tpe)
+
+              SymbolMutator.getOrErrorAndAbort.enter(module, symbol)
+              symbol
+        end symbol
 
         SynthesizedPlacedValues(symbol, module, peer, parents)
   end synthesizedPlacedValues
