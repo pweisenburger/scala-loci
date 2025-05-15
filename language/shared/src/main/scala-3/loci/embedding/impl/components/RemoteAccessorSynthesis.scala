@@ -1040,7 +1040,7 @@ trait RemoteAccessorSynthesis:
       case Result(base: TypeRepr, result: TypeRepr) extends RequiredMarshallable(Some(result), None)
       case Proxy(base: TypeRepr, result: TypeRepr, proxy: TypeRepr) extends RequiredMarshallable(Some(result), Some(proxy))
 
-    def generateMarshallable(required: RequiredMarshallable, allowSkippingAbstract: Boolean, name: Option[String]): Either[String, () => Either[String, Option[Marshallable]]] =
+    def generateMarshallable(required: RequiredMarshallable, allowSkippingAbstract: Boolean, overridingName: Option[String]): Either[String, () => Either[String, Option[Marshallable]]] =
       val requiredTypes = TransmittableTypes(
         required.base,
         TypeBounds.empty,
@@ -1054,7 +1054,7 @@ trait RemoteAccessorSynthesis:
         else s"$message. Found ${prettyType(types.show)}, required ${prettyType(requiredTypes.show)}."
 
       def generateMarshallableName() =
-        name getOrElse:
+        overridingName getOrElse:
           val name = s"${names.marshalling}$mangledName$$$marshallableIndex"
           marshallableIndex += 1
           name
@@ -1082,7 +1082,7 @@ trait RemoteAccessorSynthesis:
               transmittableSignature match
                 case Some(transmittableSignature) =>
                   if transmittableSignature != abstractSignature || !resolution.allowSkippingAbstract then
-                    val flags = if name.isDefined then Flags.Override else Flags.EmptyFlags
+                    val flags = if overridingName.isDefined then Flags.Override else Flags.EmptyFlags
                     val body = if transmittableSignature != abstractSignature then rhs() else Right(None)
                     body flatMap: body =>
                       marshallable(transmittableSignature, transmittableTypes.asMarshallableTypes, body, flags, generateMarshallableName) map: (marshallable, definition) =>
@@ -1138,38 +1138,41 @@ trait RemoteAccessorSynthesis:
         types.result <:<? marshallableTypes.result &&
         types.proxy <:<? marshallableTypes.proxy
 
-      def checkTransmittableConformation(types: TransmittableTypes, transmittable: Option[Transmittable], resolution: AccessorResolution) =
+      def checkTransmittableConformation(types: TransmittableTypes, transmittable: Option[Transmittable], resolution: Option[AccessorResolution]) =
         inline def generalizableToAbstract =
           (accessorGeneration == Deferred || accessorGeneration == Preferred || allowSkippingAbstract) &&
           conformsToRequiredMarshallableWithGeneralizedResultType(types.asMarshallableTypes) &&
           transmittable.isDefined
 
         if conformsToRequiredMarshallable(types.asMarshallableTypes) then
-          None
+          Right(resolution)
         else if generalizableToAbstract then
           val transmittableTypes = types.copy(result = required.maybeResult getOrElse types.result)
           info(s"    Generalizing to ${transmittableTypes.showMore} [signature $abstractSignature] due to type mismatch")
-          resolution.transmittable = Some(Transmittable(transmittable.get.tree, transmittableTypes, abstractSignature))
-          resolution.marshallable = None
-          None
+          val accessor = resolution getOrElse accessorResolutionTypeMap.addNewTypeEntry(transmittableTypes.base, AccessorResolution())
+          accessor.transmittable = Some(Transmittable(transmittable.get.tree, transmittableTypes, abstractSignature))
+          accessor.marshallable = None
+          Right(Some(accessor))
         else
-          Some(transmittableResolutionFailureMessage(types))
+          Left(transmittableResolutionFailureMessage(types))
       end checkTransmittableConformation
 
       def checkAccessorTransmittableTypesConformation[T](types: TransmittableTypes, resolution: AccessorResolution)(body: => Either[String, T]) =
-        (checkTransmittableConformation(types, resolution.transmittable, resolution) toLeft { body }).flatten
+        checkTransmittableConformation(types, resolution.transmittable, Some(resolution)) flatMap: _ =>
+          body
 
-      def checkAccessorTransmittableConformation[T](transmittable: Transmittable, resolution: AccessorResolution)(body: Transmittable => Either[String, T]) =
-        (checkTransmittableConformation(transmittable.types, Some(transmittable), resolution) toLeft { body(resolution.transmittable getOrElse transmittable) }).flatten
+      def checkAccessorTransmittableConformation[T](transmittable: Transmittable, resolution: Option[AccessorResolution])(body: (Option[AccessorResolution], Transmittable) => Either[String, T]) =
+        checkTransmittableConformation(transmittable.types, Some(transmittable), resolution) flatMap: resolution =>
+          body(resolution, resolution flatMap { _.transmittable } getOrElse transmittable)
 
       def lookupInheritedMarshallable(resolution: Option[AccessorResolution], transmittable: Option[Transmittable]) =
         inheritedMarshallables.lookupType(required.base) flatMap: marshallables =>
           marshallables collectFirst Function.unlift: marshallable =>
             val conforms =
-              !(name contains marshallable.symbol.name) &&
+              !(overridingName contains marshallable.symbol.name) &&
               conformsToRequiredMarshallable(marshallable.types) &&
               (accessorGeneration == Deferred ||
-                transmittable.isDefined && allowAbstractMarshallables ||
+                transmittable.isDefined && overridingName.isEmpty && allowAbstractMarshallables ||
                 marshallable.signature != abstractSignature) &&
               (transmittable orElse (resolution flatMap { _.transmittable }) forall: transmittable =>
                 conformsToMarshallableTypes(marshallable.types, transmittable.types.asMarshallableTypes) &&
@@ -1204,7 +1207,7 @@ trait RemoteAccessorSynthesis:
                     Right(resolution)
                   case _ =>
                     info("    Resolving Transmittable through implicit resolution")
-                    val transmittable = Resolution.resolveTransmittable(required.base, allowAbstractMarshallables)
+                    val transmittable = Resolution.resolveTransmittable(required.base, allowAbstractMarshallables && overridingName.isEmpty)
                     if transmittable.isLeft then
                       info("    Resolution failed")
                     transmittable map: transmittable =>
@@ -1260,7 +1263,7 @@ trait RemoteAccessorSynthesis:
                 resolution flatMap { resolution => resolution.transmittable map { resolution -> _ } } match
                   case Some(resolution, transmittable) =>
                     info(s"    Found existing ${transmittable.types.showMore} [signature: ${transmittable.signature}]")
-                    checkAccessorTransmittableConformation(transmittable, resolution): transmittable =>
+                    checkAccessorTransmittableConformation(transmittable, Some(resolution)): (_, transmittable) =>
                       lookupInheritedMarshallable(Some(resolution), Some(transmittable)) map { Right(_) } getOrElse:
                         info(s"    Selecting ${transmittable.types.showMore} [signature: ${transmittable.signature}]")
                         Right(() => generateMarshallable(resolution, transmittable.types, Some(transmittable.signature), () => marshallableConstruction(transmittable)))
@@ -1276,18 +1279,19 @@ trait RemoteAccessorSynthesis:
                     marshallable getOrElse:
                       forcedResolutionFailure map { Left(_) } getOrElse:
                         info("    Resolving Transmittable through implicit resolution")
-                        val transmittable = Resolution.resolveTransmittable(required.base, allowAbstractMarshallables)
+                        val transmittable = Resolution.resolveTransmittable(required.base, allowAbstractMarshallables && overridingName.isEmpty)
                         if transmittable.isLeft then
                           info("    Resolution failed")
                         transmittable flatMap: transmittable =>
                           info(s"    Resolved ${transmittable.types.showMore} [signature: ${transmittable.signature}]")
-                          val accessor = resolution getOrElse accessorResolutionTypeMap.addNewTypeEntry(required.base, AccessorResolution())
-                          accessor.transmittable = Some(transmittable)
-                          accessor.marshallable = None
-                          accessor.allowSkippingAbstract &= allowSkippingAbstract
-                          checkAccessorTransmittableConformation(transmittable, accessor): transmittable =>
-                            info(s"    Selecting ${transmittable.types.showMore} [signature: ${transmittable.signature}]")
-                            Right(() => generateMarshallable(accessor, transmittable.types, Some(transmittable.signature), () => marshallableConstruction(transmittable)))
+                          checkAccessorTransmittableConformation(transmittable, resolution): (resolution, transmittable) =>
+                            lookupInheritedMarshallable(resolution, Some(transmittable)) map { Right(_) } getOrElse:
+                              val accessor = resolution getOrElse accessorResolutionTypeMap.addNewTypeEntry(required.base, AccessorResolution())
+                              accessor.transmittable = Some(transmittable)
+                              accessor.marshallable = None
+                              accessor.allowSkippingAbstract &= allowSkippingAbstract
+                              info(s"    Selecting ${transmittable.types.showMore} [signature: ${transmittable.signature}]")
+                              Right(() => generateMarshallable(accessor, transmittable.types, Some(transmittable.signature), () => marshallableConstruction(transmittable)))
       end generatedMarshallable
 
       generatedMarshallable.left foreach: message =>
@@ -1351,7 +1355,7 @@ trait RemoteAccessorSynthesis:
             val resultType = tpe.resultType
 
             def marshallable(required: RequiredMarshallable) =
-              generateMarshallable(required, (allowSkippingAbstract || valuePrivate) && !valueAccessed, name = None)
+              generateMarshallable(required, (allowSkippingAbstract || valuePrivate) && !valueAccessed, overridingName = None)
 
             val marshallables =
               marshallable(RequiredMarshallable.Result(argumentType, argumentType)) flatMap: generateArgumentMarshallable =>
@@ -1380,7 +1384,8 @@ trait RemoteAccessorSynthesis:
             case Marshallable(symbol, types, `abstractSignature`) if !canceled =>
               selectionPhaseEmpty = false
               info(s"* Inherited abstract ${types.show}")
-              generateMarshallable(RequiredMarshallable.Proxy(types.base, types.result, types.proxy), allowSkippingAbstract = false, Some(symbol.name)) match
+              val required = RequiredMarshallable.Proxy(types.base, types.result, types.proxy)
+              generateMarshallable(required, allowSkippingAbstract = false, overridingName = Some(symbol.name)) match
                 case Right(generateMarshallable) =>
                   Some(symbol, types, generateMarshallable)
                 case Left(message) =>
