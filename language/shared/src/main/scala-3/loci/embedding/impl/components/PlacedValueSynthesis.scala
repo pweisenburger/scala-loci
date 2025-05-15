@@ -356,9 +356,8 @@ trait PlacedValueSynthesis:
             baseClasses contains _.typeSymbol.owner
 
           val parents =
-            TypeRepr.of[Object] :: (
-              if peer == defn.AnyClass then (parentPlacedValues ++ Iterator(types.placedValues)).toList
-              else synthesizedPlacedValues(module, defn.AnyClass).symbol.typeRef :: parentPlacedValues.toList)
+            if peer == defn.AnyClass then TypeRepr.of[Object] :: (parentPlacedValues ++ Iterator(types.placedValues)).toList
+            else List(TypeRepr.of[Object], synthesizedPlacedValues(module, defn.AnyClass).symbol.typeRef)
 
           val selfType =
             Option.when(selfTypePlacedValues.hasNext):
@@ -367,6 +366,7 @@ trait PlacedValueSynthesis:
           (parents, selfType)
         else
           (List(TypeRepr.of[Object]), None)
+      end val
 
       if peer == defn.AnyClass then
         SymbolMutator.getOrErrorAndAbort.invalidateMemberCaches(module)

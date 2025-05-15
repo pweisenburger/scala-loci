@@ -189,55 +189,58 @@ trait Dispatch:
 
           synthesizedDefinitions(symbol).fold(dispatching): definition =>
             definition.impls.foldRight(dispatching): (impl, dispatching) =>
-              val value = This(impl.owner).select(definition.binding)
-              val placedValue = This(module.symbol).select(placed)
-              val argumentsType = placedValue.tpe.widenTermRefByName.typeArgs.head
-              val placedType = symbol.info.widenTermRefByName.resultType
-              val pos = if symbol.flags is Flags.Synthetic then module.pos.firstCodeLine else symbol.pos getOrElse module.pos.firstCodeLine
+              synthesizedPlacedValues(impl.owner).fold(dispatching): placedValues =>
+                val peer = module.symbol.typeMember(placedValues.peer.name)
+                val owner = synthesizedPlacedValues(module.symbol, peer).symbol
+                val value = This(owner).select(definition.binding)
+                val placedValue = This(module.symbol).select(placed)
+                val argumentsType = placedValue.tpe.widenTermRefByName.typeArgs.head
+                val placedType = symbol.info.widenTermRefByName.resultType
+                val pos = if symbol.flags is Flags.Synthetic then module.pos.firstCodeLine else symbol.pos getOrElse module.pos.firstCodeLine
 
-              val meaningfulArgument = meaningfulArgumentType(argumentsType)
+                val meaningfulArgument = meaningfulArgumentType(argumentsType)
 
-              def result(value: Term, reference: Term) =
-                placedValue.select(symbols.placedValueResult).select(symbols.marshal).appliedTo(value, reference)
+                def result(value: Term, reference: Term) =
+                  placedValue.select(symbols.placedValueResult).select(symbols.marshal).appliedTo(value, reference)
 
-              def argumentApplication[Result](arguments: Arguments[Result]) =
-                argumentApplicationWithSubjectivity(module.symbol, impl.owner, value, placedType, arguments, argumentsType, pos)
+                def argumentApplication[Result](arguments: Arguments[Result]) =
+                  argumentApplicationWithSubjectivity(module.symbol, owner, value, placedType, arguments, argumentsType, pos)
 
-              val dispatch =
-                if meaningfulArgument then
-                  argumentApplication(Arguments.Populated) map: argumentApplication =>
-                    (owner: Symbol, request: Term, reference: Term) =>
-                      placedValue.select(symbols.placedValueArguments).select(symbols.unmarshal).appliedTo(request, reference)
-                        .select(symbols.tryMap)
-                        .appliedToType(types.messageBuffer)
-                        .appliedTo(
-                          Lambda(
-                            owner,
-                            MethodType(List("arguments"))(_ => List(argumentsType), _ => types.messageBuffer),
-                            (_, args) => result(argumentApplication(reference)(Ref(args.head.symbol)), reference)))
-                else
-                  argumentApplication(Arguments.Void) map: argumentApplication =>
-                    (owner: Symbol, request: Term, reference: Term) =>
-                      result(argumentApplication(reference), reference)
+                val dispatch =
+                  if meaningfulArgument then
+                    argumentApplication(Arguments.Populated) map: argumentApplication =>
+                      (owner: Symbol, request: Term, reference: Term) =>
+                        placedValue.select(symbols.placedValueArguments).select(symbols.unmarshal).appliedTo(request, reference)
+                          .select(symbols.tryMap)
+                          .appliedToType(types.messageBuffer)
+                          .appliedTo(
+                            Lambda(
+                              owner,
+                              MethodType(List("arguments"))(_ => List(argumentsType), _ => types.messageBuffer),
+                              (_, args) => result(argumentApplication(reference)(Ref(args.head.symbol)), reference)))
+                  else
+                    argumentApplication(Arguments.Void) map: argumentApplication =>
+                      (owner: Symbol, request: Term, reference: Term) =>
+                        result(argumentApplication(reference), reference)
 
-              dispatch.fold(dispatching): dispatch =>
-                dispatching.prepend(impl.owner): (owner, request, reference) =>
-                  val tpe =
-                    if meaningfulArgument then
-                      symbols.`try`.typeRef.appliedTo(types.messageBuffer)
-                    else
-                      types.messageBuffer
+                dispatch.fold(dispatching): dispatch =>
+                  dispatching.prepend(owner): (owner, request, reference) =>
+                    val tpe =
+                      if meaningfulArgument then
+                        symbols.`try`.typeRef.appliedTo(types.messageBuffer)
+                      else
+                        types.messageBuffer
 
-                  val tryDispatch =
-                    Select.unique(Ref(symbols.`try`.companionModule), names.apply).appliedToType(tpe).appliedTo(dispatch(owner, request, reference))
+                    val tryDispatch =
+                      Select.unique(Ref(symbols.`try`.companionModule), names.apply).appliedToType(tpe).appliedTo(dispatch(owner, request, reference))
 
-                  val tryDispatchFlattened =
-                    if meaningfulArgument then
-                      tryDispatch.select(symbols.tryFlatten).appliedToType(types.messageBuffer).appliedTo(tryMessageBufferRefl)
-                    else
-                      tryDispatch
+                    val tryDispatchFlattened =
+                      if meaningfulArgument then
+                        tryDispatch.select(symbols.tryFlatten).appliedToType(types.messageBuffer).appliedTo(tryMessageBufferRefl)
+                      else
+                        tryDispatch
 
-                  CaseDef(placedValue.select(symbols.placedValueSignature).select(symbols.valueSignatureName), guard = None, tryDispatchFlattened)
+                    CaseDef(placedValue.select(symbols.placedValueSignature).select(symbols.valueSignatureName), guard = None, tryDispatchFlattened)
     end valueDispatchings
 
     val moduleDispatching =
