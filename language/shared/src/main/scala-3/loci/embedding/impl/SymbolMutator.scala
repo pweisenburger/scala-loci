@@ -8,6 +8,7 @@ import scala.util.control.NonFatal
 class SymbolMutator private ():
   private val quotesImplClass = Class.forName("scala.quoted.runtime.impl.QuotesImpl")
   private val contextClass = Class.forName("dotty.tools.dotc.core.Contexts$Context")
+  private val namesClass = Class.forName("dotty.tools.dotc.core.Names")
   private val treeClass = Class.forName("dotty.tools.dotc.ast.Trees$Tree")
   private val typeClass = Class.forName("dotty.tools.dotc.core.Types$Type")
   private val symbolsClass = Class.forName("dotty.tools.dotc.core.Symbols")
@@ -19,9 +20,12 @@ class SymbolMutator private ():
   private val annotationClass = Class.forName("dotty.tools.dotc.core.Annotations$Annotation")
 
   private val ctx = quotesImplClass.getMethod("ctx")
+  private val termName = namesClass.getMethod("termName", classOf[String])
+  private val typeName = namesClass.getMethod("typeName", classOf[String])
   private val newLocalDummy = symbolsClass.getMethod("newLocalDummy", symbolClass, classOf[Int], contextClass)
   private val denot = symbolClass.getMethod("denot", contextClass)
   private val span = symbolClass.getMethod("span")
+  private val symbolName = symDenotationClass.getDeclaredField("name")
   private val infoSet = symDenotationClass.getMethod("info_$eq", typeClass)
   private val flagSet = symDenotationClass.getMethod("setFlag", classOf[Long])
   private val flagReset = symDenotationClass.getMethod("resetFlag", classOf[Long])
@@ -36,8 +40,20 @@ class SymbolMutator private ():
   private val annotationApply = annotationClass.getMethod("apply", typeClass, classOf[List[?]], classOf[Long], contextClass)
   private val annotationApplyWithTree = annotationClass.getMethod("apply", treeClass)
 
+  symbolName.setAccessible(true)
+
   def createLocalDummy(using Quotes)(symbol: quotes.reflect.Symbol): quotes.reflect.Symbol =
     newLocalDummy.invoke(null, symbol, 0, ctx.invoke(quotes)).asInstanceOf[quotes.reflect.Symbol]
+
+  def setTermName(using Quotes)(symbol: quotes.reflect.Symbol, name: String): Unit =
+    val denotation = denot.invoke(symbol, ctx.invoke(quotes))
+    if symDenotationClass.isInstance(denotation) then
+      symbolName.set(denotation, termName.invoke(null, name))
+
+  def setTypeName(using Quotes)(symbol: quotes.reflect.Symbol, name: String): Unit =
+    val denotation = denot.invoke(symbol, ctx.invoke(quotes))
+    if symDenotationClass.isInstance(denotation) then
+      symbolName.set(denotation, typeName.invoke(null, name))
 
   def setInfo(using Quotes)(symbol: quotes.reflect.Symbol, info: quotes.reflect.TypeRepr): Unit =
     infoSet.invoke(denot.invoke(symbol, ctx.invoke(quotes)), info)
