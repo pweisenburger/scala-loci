@@ -252,14 +252,11 @@ trait RemoteAccessorSynthesis:
     else if symbol.flags is Flags.Trait then "trait"
     else "class"
 
-  private def accessorSignature(name: String | List[TypeToken], params: List[List[TypeRepr]], result: TypeRepr) =
+  private def accessorSignature(name: List[TypeToken], params: List[List[TypeRepr]], result: TypeRepr) =
     val paramsSignature = params flatMap: params =>
       TypeToken.`(` :: ((params flatMap { param => TypeToken.`,` ++ TypeToken.typeSignature(param) }).drop(2) :+ TypeToken.`)`)
-    val prefix = name match
-      case name: String => List(TypeToken(name))
-      case name: List[TypeToken] => name
     val signature =
-      prefix ++ paramsSignature ++ TypeToken.`:` ++ TypeToken.typeSignature(result)
+      name ++ paramsSignature ++ TypeToken.`:` ++ TypeToken.typeSignature(result)
     TypeToken.serialize(signature)
 
   private val unknownSignature = "########"
@@ -755,9 +752,10 @@ trait RemoteAccessorSynthesis:
     end accessCollector
 
     def collectAccesses(indexing: String | Int, tree: Tree, values: List[(Option[Symbol], String, TypeRepr, () => (String, Position))], transmittables: List[(Term, Position)], accessed: Set[Symbol]) =
+      val signature = TypeToken.`<` :: signaturePrefix ++ List(TypeToken.` `, TypeToken("placed"), TypeToken.` `, TypeToken("block"), TypeToken.` `)
       val init = indexing match
-        case index: Int => (TypeToken.`<` :: signaturePrefix ++ List(TypeToken.` `, TypeToken("placed"), TypeToken.` `, TypeToken("block"), TypeToken.` `), index)
-        case name: String => (List(TypeToken(name), TypeToken.`<`, TypeToken("placed"), TypeToken.` `, TypeToken("block"), TypeToken.` `), 0)
+        case index: Int => (signature, index)
+        case name: String => (TypeToken(name) :: signature, 0)
       val (_, index, collectedValues, collectedTransmittables, collectedAccesses, _, _) =
         accessCollector.foldTree(init ++ (values, transmittables, accessed, IdentityHashMap[Term, Unit], None), tree)(module)
       (index, collectedValues, collectedTransmittables, collectedAccesses)
@@ -770,17 +768,24 @@ trait RemoteAccessorSynthesis:
             case ValDef(_, tpt, rhs) => (tpt, rhs)
             case DefDef(_, _, tpt, rhs) => (tpt, rhs)
 
-          val name = targetName(stat.symbol)
+          val symbol = stat.symbol
+
           val (_, collectedValues, collectedTransmittables, collectedAccessed) =
-            collectAccesses(name, stat, values, transmittables, accessed)
+            collectAccesses(targetName(symbol), stat, values, transmittables, accessed)
 
           val value = PlacementInfo(tpt.tpe) collect:
             case placementInfo if !placementInfo.modality.local =>
-              val (paramSymss, info) =
-                if hasSyntheticMultitierContextArgument(stat.symbol) then
-                  (stat.symbol.paramSymss.init, dropLastArgumentList(stat.symbol.info))
+              val name =
+                if symbol.flags is Flags.Private then
+                  TypeToken(targetName(symbol)) :: TypeToken.`<` :: (signaturePrefix :+ TypeToken.`>`)
                 else
-                  (stat.symbol.paramSymss, stat.symbol.info)
+                  List(TypeToken(targetName(symbol)))
+
+              val (paramSymss, info) =
+                if hasSyntheticMultitierContextArgument(symbol) then
+                  (symbol.paramSymss.init, dropLastArgumentList(symbol.info))
+                else
+                  (symbol.paramSymss, symbol.info)
               val params = paramSymss collect:
                 case params if params.isEmpty || params.head.isTerm => params map { _.info }
 
@@ -792,14 +797,14 @@ trait RemoteAccessorSynthesis:
                   Position(stat.pos.sourceFile, stat.posInUserCode.start, start - offset)
 
                 val pos =
-                  stat.symbol.pos orElse
+                  symbol.pos orElse
                   posWithoutBody getOrElse
                   Position(stat.pos.sourceFile, stat.posInUserCode.start, tpt.posInUserCode.end)
 
-                accessorGenerationFailureMessageProlog(symbolForName = Some(stat.symbol), symbolForParent = Some(stat.symbol), noninheritedPosition = Some(pos))
+                accessorGenerationFailureMessageProlog(symbolForName = Some(symbol), symbolForParent = Some(symbol), noninheritedPosition = Some(pos))
               end prolog
 
-              (Some(stat.symbol),
+              (Some(symbol),
                accessorSignature(name, params, placementInfo.valueType),
                info.withResultType(placementInfo.valueType),
                prolog)
@@ -875,49 +880,39 @@ trait RemoteAccessorSynthesis:
 
     val inheritedValues =
       if !canceled then
-        val overridden = mutable.Set.empty[Symbol]
+        module.fieldMembers.iterator ++ module.methodMembers.iterator flatMap: member =>
+          if member.owner != module &&
+             (member.isMethod || member.isField) &&
+             !(member.flags is Flags.Synthetic) &&
+             !(member.flags is Flags.Artifact) &&
+             !(member.flags is Flags.Private) then
+            val tpe = ThisType(module).memberType(member)
+            PlacementInfo(tpe.resultType) flatMap: placementInfo =>
+              if !placementInfo.modality.local then
+                def hasPlacedAccessor =
+                  Iterator(member) ++ member.allOverriddenSymbols exists { inheritedPlacedAccessors contains _ }
 
-        overridden ++=
-          values.iterator flatMap: (original, _, _, _) =>
-            original.iterator flatMap:
-              _.allOverriddenSymbols
+                def sameTypeInOwner =
+                  val tpeInOwner = ThisType(member.owner).memberType(member)
+                  PlacementInfo(tpeInOwner) forall: placementInfoInOwner =>
+                    tpe.withResultType(placementInfo.valueType) =:= tpeInOwner.withResultType(placementInfoInOwner.valueType)
 
-        module.typeRef.baseClasses.tail flatMap: parent =>
-          parent.declarations flatMap: decl =>
-            if (decl.isMethod || decl.isField) &&
-               !(decl.flags is Flags.Synthetic) &&
-               !(decl.flags is Flags.Artifact) &&
-               !(overridden contains decl) then
-              val tpe = ThisType(module).memberType(decl)
-              PlacementInfo(tpe.resultType) flatMap: placementInfo =>
-                if !placementInfo.modality.local then
-                  overridden ++= decl.allOverriddenSymbols
-
-                  def hasPlacedAccessor =
-                    Iterator(decl) ++ decl.allOverriddenSymbols exists { inheritedPlacedAccessors contains _ }
-
-                  def sameTypeInOwner =
-                    val tpeInOwner = ThisType(decl.owner).memberType(decl)
-                    PlacementInfo(tpeInOwner) forall: placementInfoInOwner =>
-                      tpe.withResultType(placementInfo.valueType) =:= tpeInOwner.withResultType(placementInfoInOwner.valueType)
-
-                  Option.when(accessorGeneration == Forced || !hasPlacedAccessor || !sameTypeInOwner):
-                    val (paramSymss, info) =
-                      if hasSyntheticMultitierContextArgument(decl) then
-                        (decl.paramSymss.init, dropLastArgumentList(tpe))
-                      else
-                        (decl.paramSymss, tpe)
-                    val name = targetName(decl)
-                    val params = paramSymss collect:
-                      case params if params.isEmpty || params.head.isTerm => params map { _.info }
-                    (Some(decl),
-                     accessorSignature(name, params, placementInfo.valueType),
-                     info.withResultType(placementInfo.valueType),
-                     () => accessorGenerationFailureMessageProlog(symbolForName = Some(decl), symbolForParent = Some(decl), noninheritedPosition = None))
-                else
-                  None
-            else
-              None
+                Option.when(accessorGeneration == Forced || !hasPlacedAccessor || !sameTypeInOwner):
+                  val (paramSymss, info) =
+                    if hasSyntheticMultitierContextArgument(member) then
+                      (member.paramSymss.init, dropLastArgumentList(tpe))
+                    else
+                      (member.paramSymss, tpe)
+                  val params = paramSymss collect:
+                    case params if params.isEmpty || params.head.isTerm => params map { _.info }
+                  (Some(member),
+                   accessorSignature(List(TypeToken(targetName(member))), params, placementInfo.valueType),
+                   info.withResultType(placementInfo.valueType),
+                   () => accessorGenerationFailureMessageProlog(symbolForName = Some(member), symbolForParent = Some(member), noninheritedPosition = None))
+              else
+                None
+          else
+            None
       else
         List.empty
     end inheritedValues

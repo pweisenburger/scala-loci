@@ -282,6 +282,11 @@ object MultitierPreprocessor:
             case flags: Flags @unchecked if flagsClass.isInstance(flags) => flags
             case _ => Flags.EmptyFlags
 
+        def position(decl: Any) =
+          decl match
+            case QuotesSymbol(symbol) => symbol.pos
+            case QuotesTree(tree) => Some(tree.pos)
+
         def mutateField(field: Field, obj: Any, value: Any) =
           try
             field.setAccessible(true)
@@ -428,10 +433,10 @@ object MultitierPreprocessor:
               val hasNonPlacementType = nonPlacementType(typedTpt.tpe)
 
               def nonplacedType(arg: Any) =
-                appliedTypeTree.invoke(null, TypedSplice(TypeIdent(`type`)), List(TypedSplice(TypeIdent(nonplaced)), arg), Position.ofMacroExpansion.sourceFile)
+                appliedTypeTree.invoke(null, TypedSplice(TypeIdent(`type`)), List(TypedSplice(TypeIdent(nonplaced)), arg), SourceFile.current)
 
               def of(args: List[Any]) =
-                appliedTypeTree.invoke(null, TypedSplice(TypeIdent(`embedding.of`)), args, Position.ofMacroExpansion.sourceFile)
+                appliedTypeTree.invoke(null, TypedSplice(TypeIdent(`embedding.of`)), args, SourceFile.current)
 
               def isNothing(tpe: TypeRepr): Boolean = tpe match
                 case _ if !correctlyTyped(tpe) || !(tpe <:< TypeRepr.of[Nothing]) => false
@@ -496,12 +501,12 @@ object MultitierPreprocessor:
                       val markerDef =
                         withSpan.invoke(
                           withFlags.invoke(
-                            valDef.invoke(null, markerName, TypedSplice(TypeTree.of[Boolean]), markerTree, Position.ofMacroExpansion.sourceFile),
+                            valDef.invoke(null, markerName, TypedSplice(TypeTree.of[Boolean]), markerTree, SourceFile.current),
                             Flags.Synthetic),
                           positionSpan)
 
                       def blockWithMarkerDef(tree: Any) =
-                        block.invoke(null, List(markerDef), tree, Position.ofMacroExpansion.sourceFile)
+                        block.invoke(null, List(markerDef), tree, SourceFile.current)
 
                       val placementType = untypedTpt match
                         case _ if infixOpClass.isInstance(untypedTpt) => Some(left.invoke(untypedTpt) -> right.invoke(untypedTpt))
@@ -512,10 +517,10 @@ object MultitierPreprocessor:
                         def adapt(span: Any, left: Any, right: Any): Option[(AnyRef, Option[Any])] =
                           propagate(left) flatMap: (left, leftPeer) =>
                             propagate(right) map: (right, rightPeer) =>
-                              val leftTypeApply = typeApply.invoke(null, TypedSplice(Ref(and)), List(TypedSplice(TypeIdent(`embedding.on`)), value, leftPeer getOrElse peer), Position.ofMacroExpansion.sourceFile)
-                              val leftApply = apply.invoke(null, leftTypeApply, List(left), Position.ofMacroExpansion.sourceFile)
-                              val rightTypeApply = typeApply.invoke(null, leftApply, List(value, value, rightPeer getOrElse peer, peer), Position.ofMacroExpansion.sourceFile)
-                              val rightApply = apply.invoke(null, rightTypeApply, List(right), Position.ofMacroExpansion.sourceFile)
+                              val leftTypeApply = typeApply.invoke(null, TypedSplice(Ref(and)), List(TypedSplice(TypeIdent(`embedding.on`)), value, leftPeer getOrElse peer), SourceFile.current)
+                              val leftApply = apply.invoke(null, leftTypeApply, List(left), SourceFile.current)
+                              val rightTypeApply = typeApply.invoke(null, leftApply, List(value, value, rightPeer getOrElse peer, peer), SourceFile.current)
+                              val rightApply = apply.invoke(null, rightTypeApply, List(right), SourceFile.current)
                               (withSpan.invoke(rightApply, span), None)
 
                         def underlying(tree: Any): Any =
@@ -526,14 +531,14 @@ object MultitierPreprocessor:
                             case (left, QuotesTree(op @ Ident("and")), right) =>
                               adapt(span.invoke(op), left, right)
                             case (QuotesTree(left @ TypeApply(fun, List(arg))), QuotesTree(op @ Ident("apply" | "local" | "sbj")), right) if maybePlacementRelatedTerm(fun) =>
-                              val tree = infix.invoke(null, left, op, blockWithMarkerDef(right), Position.ofMacroExpansion.sourceFile)
+                              val tree = infix.invoke(null, left, op, blockWithMarkerDef(right), SourceFile.current)
                               Some(tree, Some(arg))
                             case _ =>
                               None
                           case QuotesTree(Apply(tree @ Select(left, "and"), List(right))) =>
                             adapt(nameSpan.invoke(tree, context), left, right)
                           case QuotesTree(Apply(term @ TypeApply(fun, List(arg)), List(expr))) if maybePlacementRelatedTerm(fun) =>
-                            val tree = apply.invoke(null, term, List(blockWithMarkerDef(expr)), Position.ofMacroExpansion.sourceFile)
+                            val tree = apply.invoke(null, term, List(blockWithMarkerDef(expr)), SourceFile.current)
                             Some(tree, Some(arg))
                           case _ =>
                             None
@@ -565,33 +570,33 @@ object MultitierPreprocessor:
                       val contextDef =
                         withSpan.invoke(
                           withFlags.invoke(
-                            valDef.invoke(null, contextName, contextTypeTree, contextRhs, Position.ofMacroExpansion.sourceFile),
+                            valDef.invoke(null, contextName, contextTypeTree, contextRhs, SourceFile.current),
                             Flags.Synthetic),
                           positionSpan)
 
-                      val contextRef = ident.invoke(null, contextName, Position.ofMacroExpansion.sourceFile)
-                      val contextTree = block.invoke(null, List(contextDef), contextRef, Position.ofMacroExpansion.sourceFile)
+                      val contextRef = ident.invoke(null, contextName, SourceFile.current)
+                      val contextTree = block.invoke(null, List(contextDef), contextRef, SourceFile.current)
 
                       val placedContext = setApplyKind.invoke(
-                        apply.invoke(null, TypedSplice(Ref(placed)), List(contextTree), Position.ofMacroExpansion.sourceFile),
+                        apply.invoke(null, TypedSplice(Ref(placed)), List(contextTree), SourceFile.current),
                         applyKindUsing)
 
                       val paramName = termName.invoke(null, "<synthetic context>")
-                      val paramTypeTree = typeTree.invoke(null, Position.ofMacroExpansion.sourceFile)
+                      val paramTypeTree = typeTree.invoke(null, SourceFile.current)
 
                       val paramDef =
                         withSpan.invoke(
                           withFlags.invoke(
-                            valDef.invoke(null, paramName, paramTypeTree, emptyTree, Position.ofMacroExpansion.sourceFile),
+                            valDef.invoke(null, paramName, paramTypeTree, emptyTree, SourceFile.current),
                             Flags.Synthetic | Flags.Param | Flags.Given),
                           positionSpan)
 
-                      val contextFunction = function.invoke(null, List(paramDef), adaptedRhs, Position.ofMacroExpansion.sourceFile)
+                      val contextFunction = function.invoke(null, List(paramDef), adaptedRhs, SourceFile.current)
 
                       // extend the span of the right-hand-side macro application to the entire definition
                       // we use this extended span to identify the outer-most macro application when inferring context closures
                       withSpan.invoke(
-                        apply.invoke(null, placedContext, List(contextFunction), Position.ofMacroExpansion.sourceFile),
+                        apply.invoke(null, placedContext, List(contextFunction), SourceFile.current),
                         positionSpan)
                     else
                       adaptedRhs
@@ -641,7 +646,7 @@ object MultitierPreprocessor:
                         val paramDef =
                           withSpan.invoke(
                             withFlags.invoke(
-                              valDef.invoke(null, paramName, paramTypeTree, emptyTree, Position.ofMacroExpansion.sourceFile),
+                              valDef.invoke(null, paramName, paramTypeTree, emptyTree, SourceFile.current),
                               Flags.Synthetic | Flags.Param | Flags.Given),
                             span.invoke(tree))
 
@@ -691,25 +696,26 @@ object MultitierPreprocessor:
         end processTree
 
         def processDeclarations(decl: Any, nestedInMultitierAnnottee: Boolean): Unit =
-          val multitierAnnottee = hasAnnotationSymbol(decl, `language.multitier`)
+          if position(decl) exists { _.sourceFile == SourceFile.current } then
+            val multitierAnnottee = hasAnnotationSymbol(decl, `language.multitier`)
 
-          if multitierAnnottee then
-            decl match
-              case QuotesSymbol(symbol) if flags(decl) is Flags.Trait | Flags.NoInits =>
-                resetFlag.invoke(denot.invoke(symbol, context), Flags.NoInits)
-              case _ =>
+            if multitierAnnottee then
+              decl match
+                case QuotesSymbol(symbol) if flags(decl) is Flags.Trait | Flags.NoInits =>
+                  resetFlag.invoke(denot.invoke(symbol, context), Flags.NoInits)
+                case _ =>
 
-          val compileTimeOnlyAnnotation =
-            if !multitierAnnottee then
-              Some(objectMemberCompileTimeOnlyAnnotation)
-            else if insertComileTimeOnlyForPlacedValues then
-              Some(placedValueCompileTimeOnlyAnnotation)
-            else
-              None
+            val compileTimeOnlyAnnotation =
+              if !multitierAnnottee then
+                Some(objectMemberCompileTimeOnlyAnnotation)
+              else if insertComileTimeOnlyForPlacedValues then
+                Some(placedValueCompileTimeOnlyAnnotation)
+              else
+                None
 
-          declarations(decl) foreach:
-            case QuotesSymbol(symbol) => processSymbol(decl, multitierAnnottee, nestedInMultitierAnnottee, compileTimeOnlyAnnotation, symbol)
-            case tree => processTree(decl, multitierAnnottee, nestedInMultitierAnnottee, compileTimeOnlyAnnotation, tree)
+            declarations(decl) foreach:
+              case QuotesSymbol(symbol) => processSymbol(decl, multitierAnnottee, nestedInMultitierAnnottee, compileTimeOnlyAnnotation, symbol)
+              case tree => processTree(decl, multitierAnnottee, nestedInMultitierAnnottee, compileTimeOnlyAnnotation, tree)
         end processDeclarations
 
         declarations(owner) foreach: decl =>

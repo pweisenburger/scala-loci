@@ -168,7 +168,7 @@ trait PlacedValueSynthesis:
 
     synthesizedDefinitionsCache.getOrElseUpdate(symbol, tier):
       val multitierModule = isMultitierModule(symbol)
-      val placedName = s"<${names.placedValue} ${symbol.name} of ${fullName(symbol.owner)}>"
+      val symbolTargetName = targetName(symbol)
 
       val potentialGetterName = if symbol.name endsWith "_=" then symbol.name.dropRight(2) else ""
       val potentialGetter = if potentialGetterName.nonEmpty then symbol.owner.declaredField(potentialGetterName) else Symbol.noSymbol
@@ -178,7 +178,7 @@ trait PlacedValueSynthesis:
           case MethodType(List(paramName), List(paramType), resultType) if resultType.typeSymbol == defn.UnitClass && potentialGetter.exists =>
             val name =
               if symbol.flags is Flags.Private then
-                s"<${names.placedPrivateValue} $potentialGetterName of ${fullName(symbol.owner)}>_="
+                s"<${names.placedPrivateValue} ${targetName(potentialGetter)} of ${fullName(symbol.owner)}>_="
               else
                 symbol.name
             val (info, _) = erasePlacementAndNonPlacementType(paramType)
@@ -188,7 +188,7 @@ trait PlacedValueSynthesis:
               val multitierModuleTypeUnlifter = MultitierModuleTypeUnlifter(Some(symbol.termRef))
               (symbol.name, multitierModuleTypeUnlifter.transform(tpe), defn.AnyClass, Symbol.noSymbol)
             else
-              val name = if symbol.flags is Flags.Private then s"<${names.placedPrivateValue} ${symbol.name} of ${fullName(symbol.owner)}>" else symbol.name
+              val name = if symbol.flags is Flags.Private then s"<${names.placedPrivateValue} $symbolTargetName of ${fullName(symbol.owner)}>" else symbol.name
               val (info, peer) = erasePlacementAndNonPlacementType(symbol.info)
               (name, if hasSyntheticMultitierContextArgument(symbol) then dropLastArgumentList(info) else info, peer, Symbol.noSymbol)
 
@@ -220,10 +220,15 @@ trait PlacedValueSynthesis:
           else if universalOnly then symbol.flags
           else symbol.flags &~ Flags.PrivateLocal
 
-        val universal = universalValues.declaredField(universalName) orElse:
-          val universal = newVal(universalValues, universalName, info, flags, Symbol.noSymbol)
-          copyAnnotations(symbol, universal, decrementContextResultCount, sameTargetName = true)
-          universal
+        val universal =
+          if symbol.isMethod then
+            universalValues.declaredMethod(universalName) find { _.info =:= info } getOrElse:
+              newMethod(universalValues, universalName, info, flags, Symbol.noSymbol)
+          else
+            universalValues.declaredField(universalName) orElse:
+              newVal(universalValues, universalName, info, flags, Symbol.noSymbol)
+
+        copyAnnotations(symbol, universal, decrementContextResultCount, sameTargetName = !(symbol.flags is Flags.Private))
 
         val setter =
           Option.when((symbol.flags is Flags.Mutable | Flags.PrivateLocal) && symbol.isField && !symbol.isFieldAccessor && !symbol.setter.exists):
@@ -239,10 +244,11 @@ trait PlacedValueSynthesis:
               val impls = placedValues map: placedValues =>
                 placedValues.declaredMethod(universalName) find { _.info =:= info } getOrElse:
                   val placed = newMethod(placedValues, universalName, info, flags | Flags.Synthetic | Flags.Override, Symbol.noSymbol)
-                  copyAnnotations(symbol, placed, decrementContextResultCount, sameTargetName = true)
+                  copyAnnotations(symbol, placed, decrementContextResultCount, sameTargetName = !(symbol.flags is Flags.Private))
                   placed
               SynthesizedDefinitions(symbol, universal, None, setter, impls)
             else
+              val placedName = s"<${names.placedValue} $symbolTargetName of ${fullName(symbol.owner)}>"
               val methodInfo = MethodType(List.empty)(_ => List.empty, _ => info)
 
               val universalInit = universalValues.declaredMethod(placedName) find { _.info =:= methodInfo } getOrElse:
