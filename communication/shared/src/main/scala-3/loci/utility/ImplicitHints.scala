@@ -208,7 +208,7 @@ object implicitHints:
     val (maxDepth, maxVisited, resetDepth) =
       (tpe
         map { tpe =>
-          val related = typeSymbolNames(tpe) ++ importNames(Position.ofMacroExpansion.sourceFile)
+          val related = typeSymbolNames(tpe) ++ importNames(SourceFile.current)
           val normalRelated = related map { _.toLowerCase }
           val resetDepth = { (name: String) =>
             val normalName = name.toLowerCase
