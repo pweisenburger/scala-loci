@@ -244,6 +244,12 @@ trait RemoteAccessorSynthesis:
       map filterInPlace { (_, value) => mapping.get(value).isDefined } mapValuesInPlace { (_, value) => mapping.get(value).get }
       this
 
+  private def serializeTypeAndSanityCheck(tpe: TypeRepr, from: Symbol) =
+    TypeToken.fromType(tpe, from) flatMap: tokens =>
+      val serialized = TypeToken.serialize(tokens)
+      Option.when(TypeToken.deserializeType(serialized, from) exists { _ =:= tpe }):
+        (tokens, serialized)
+
   private def mangledSymbolName(symbol: Symbol) =
     f"${s"${implementationForm(symbol)} ${fullName(symbol)}".hashCode}%08x"
 
@@ -255,8 +261,7 @@ trait RemoteAccessorSynthesis:
   private def accessorSignature(name: List[TypeToken], params: List[List[TypeRepr]], result: TypeRepr) =
     val paramsSignature = params flatMap: params =>
       TypeToken.`(` :: ((params flatMap { param => TypeToken.`,` ++ TypeToken.typeSignature(param) }).drop(2) :+ TypeToken.`)`)
-    val signature =
-      name ++ paramsSignature ++ TypeToken.`:` ++ TypeToken.typeSignature(result)
+    val signature = name ++ paramsSignature ++ TypeToken.`:` ++ TypeToken.typeSignature(result)
     TypeToken.serialize(signature)
 
   private val unknownSignature = "########"
@@ -600,11 +605,15 @@ trait RemoteAccessorSynthesis:
   private def synthesizeAccessorsFromTree(module: Symbol, tree: ClassDef): Accessors =
     val mangledName = mangledSymbolName(module)
 
+    val locallyScoped = module hasAncestor { symbol => symbol.isMethod || symbol.isField }
+
     val signaturePrefix =
-      if module.isModuleDef then
-        TypeToken(implementationForm(module)) :: TypeToken.` ` :: TypeToken.typeSignature(module.termRef)
-      else
-        TypeToken(implementationForm(module)) :: TypeToken.` ` :: TypeToken.typeSignature(module.typeRef)
+      val signature =
+        serializeTypeAndSanityCheck(module.typeRef, module) map { (signature, _) => signature } getOrElse:
+          if !locallyScoped then
+            errorAndCancel(s"Failed to serialize type for ${prettyType(fullName(module))}.", tree.posInUserCode.firstCodeLine)
+          TypeToken.typeSignature(module.typeRef)
+      if signature.takeRight(2) == TypeToken.`type` then signature.init else signature :+ TypeToken.`#`
 
     val (identifier @ (identifierSymbol, _), signature @ (signatureSymbol, _), peers) = signatures(module)
 
@@ -673,9 +682,7 @@ trait RemoteAccessorSynthesis:
         case _ =>
           val parent =
             symbolForParent flatMap: symbol =>
-              val parent = tree.parents find: parent =>
-                parent.symbol == symbol.maybeOwner
-              parent orElse:
+              tree.parents find { _.symbol == symbol.maybeOwner } orElse:
                 tree.parents find: parent =>
                   (parent.symbol.fieldMembers contains symbol) ||
                   (parent.symbol.methodMembers contains symbol) ||
@@ -752,10 +759,10 @@ trait RemoteAccessorSynthesis:
     end accessCollector
 
     def collectAccesses(indexing: String | Int, tree: Tree, values: List[(Option[Symbol], String, TypeRepr, () => (String, Position))], transmittables: List[(Term, Position)], accessed: Set[Symbol]) =
-      val signature = TypeToken.`<` :: signaturePrefix ++ List(TypeToken.` `, TypeToken("placed"), TypeToken.` `, TypeToken("block"), TypeToken.` `)
+      val signatureSuffix = List(TypeToken.`<`, TypeToken("placed"), TypeToken.` `, TypeToken("block"), TypeToken.` `)
       val init = indexing match
-        case index: Int => (signature, index)
-        case name: String => (TypeToken(name) :: signature, 0)
+        case index: Int => (signaturePrefix ++ signatureSuffix, index)
+        case name: String => (signaturePrefix ++ (TypeToken(name) :: signatureSuffix), 0)
       val (_, index, collectedValues, collectedTransmittables, collectedAccesses, _, _) =
         accessCollector.foldTree(init ++ (values, transmittables, accessed, IdentityHashMap[Term, Unit], None), tree)(module)
       (index, collectedValues, collectedTransmittables, collectedAccesses)
@@ -775,12 +782,6 @@ trait RemoteAccessorSynthesis:
 
           val value = PlacementInfo(tpt.tpe) collect:
             case placementInfo if !placementInfo.modality.local =>
-              val name =
-                if symbol.flags is Flags.Private then
-                  TypeToken(targetName(symbol)) :: TypeToken.`<` :: (signaturePrefix :+ TypeToken.`>`)
-                else
-                  List(TypeToken(targetName(symbol)))
-
               val (paramSymss, info) =
                 if hasSyntheticMultitierContextArgument(symbol) then
                   (symbol.paramSymss.init, dropLastArgumentList(symbol.info))
@@ -805,7 +806,7 @@ trait RemoteAccessorSynthesis:
               end prolog
 
               (Some(symbol),
-               accessorSignature(name, params, placementInfo.valueType),
+               accessorSignature(signaturePrefix :+ TypeToken(targetName(symbol)), params, placementInfo.valueType),
                info.withResultType(placementInfo.valueType),
                prolog)
           end value
@@ -882,7 +883,6 @@ trait RemoteAccessorSynthesis:
       if !canceled then
         module.fieldMembers.iterator ++ module.methodMembers.iterator flatMap: member =>
           if member.owner != module &&
-             (member.isMethod || member.isField) &&
              !(member.flags is Flags.Synthetic) &&
              !(member.flags is Flags.Artifact) &&
              !(member.flags is Flags.Private) then
@@ -897,16 +897,18 @@ trait RemoteAccessorSynthesis:
                   PlacementInfo(tpeInOwner) forall: placementInfoInOwner =>
                     tpe.withResultType(placementInfo.valueType) =:= tpeInOwner.withResultType(placementInfoInOwner.valueType)
 
+                def argumentTypes(tpe: TypeRepr): List[List[TypeRepr]] = tpe match
+                  case MethodType(_, paramTypes, resType) =>
+                    paramTypes :: argumentTypes(resType)
+                  case PolyType(_, _, resType) =>
+                    argumentTypes(resType)
+                  case _ =>
+                    List.empty
+
                 Option.when(accessorGeneration == Forced || !hasPlacedAccessor || !sameTypeInOwner):
-                  val (paramSymss, info) =
-                    if hasSyntheticMultitierContextArgument(member) then
-                      (member.paramSymss.init, dropLastArgumentList(tpe))
-                    else
-                      (member.paramSymss, tpe)
-                  val params = paramSymss collect:
-                    case params if params.isEmpty || params.head.isTerm => params map { _.info }
+                  val info = if hasSyntheticMultitierContextArgument(member) then dropLastArgumentList(tpe) else tpe
                   (Some(member),
-                   accessorSignature(List(TypeToken(targetName(member))), params, placementInfo.valueType),
+                   accessorSignature(signaturePrefix :+ TypeToken(targetName(member)), argumentTypes(info), placementInfo.valueType),
                    info.withResultType(placementInfo.valueType),
                    () => accessorGenerationFailureMessageProlog(symbolForName = Some(member), symbolForParent = Some(member), noninheritedPosition = None))
               else
@@ -932,9 +934,9 @@ trait RemoteAccessorSynthesis:
 
       val definedOrOverriddenMarshallables = mutable.Set.empty[String]
 
-      module.typeRef.baseClasses.tail foreach: parent =>
-        if isMultitierModule(parent) then
-          val accessors = synthesizeAccessors(parent)
+      module.typeRef.baseClasses.tail foreach: base =>
+        if isMultitierModule(base) then
+          val accessors = synthesizeAccessors(base)
           accessors.overridden.iterator ++ accessors.marshalling.iterator foreach: (symbol, _) =>
             if !(definedOrOverriddenMarshallables contains symbol.name) then
               definedOrOverriddenMarshallables += symbol.name
@@ -996,15 +998,9 @@ trait RemoteAccessorSynthesis:
     end marshallableConstruction
 
     def marshallable(signature: String, types: MarshallableTypes, rhs: Option[Term], flags: Flags, generateName: () => String) =
-      inline def serializeTypeAndSanityCheck(tpe: TypeRepr, from: Symbol) =
-        TypeToken.serializeType(tpe, from) filter:
-          TypeToken.deserializeType(_, from) exists { _ =:= tpe }
-
       val typeSignatures = types.typeList.foldRight[Option[List[String]]](Some(List.empty)):
-        case (tpe, Some(types)) => serializeTypeAndSanityCheck(tpe, module) map { _ :: types }
+        case (tpe, Some(types)) => serializeTypeAndSanityCheck(tpe, module) map { (_, signature) => signature :: types }
         case _ => None
-
-      val locallyScoped = module hasAncestor { symbol => symbol.isMethod || symbol.isField }
 
       if typeSignatures.nonEmpty || locallyScoped || signature != abstractSignature then
         val symbol = newVal(module, generateName(), symbols.marshallable.typeRef.appliedTo(types.typeList), flags | Flags.Lazy | Flags.Protected, Symbol.noSymbol)
@@ -1162,13 +1158,12 @@ trait RemoteAccessorSynthesis:
           body(resolution, resolution flatMap { _.transmittable } getOrElse transmittable)
 
       def lookupInheritedMarshallable(resolution: Option[AccessorResolution], transmittable: Option[Transmittable]) =
-        inheritedMarshallables.lookupType(required.base) flatMap: marshallables =>
-          marshallables collectFirst Function.unlift: marshallable =>
+        inheritedMarshallables.lookupType(required.base) flatMap:
+          _ collectFirst Function.unlift: marshallable =>
             val conforms =
-              !(overridingName contains marshallable.symbol.name) &&
               conformsToRequiredMarshallable(marshallable.types) &&
-              (accessorGeneration == Deferred ||
-                transmittable.isDefined && overridingName.isEmpty && allowAbstractMarshallables ||
+              (transmittable.isDefined ||
+                allowAbstractMarshallables && overridingName.isEmpty ||
                 marshallable.signature != abstractSignature) &&
               (transmittable orElse (resolution flatMap { _.transmittable }) forall: transmittable =>
                 conformsToMarshallableTypes(marshallable.types, transmittable.types.asMarshallableTypes) &&
@@ -1452,7 +1447,7 @@ trait RemoteAccessorSynthesis:
               original exists: original =>
                 Iterator(original) ++ original.allOverriddenSymbols collectFirst Function.unlift(inheritedPlacedAccessors.get) exists:
                   placedInfo(_) exists:
-                    case (`signature`, `arguments`, `result`) => true
+                    case (_, `arguments`, `result`) => true
                     case _ => false
 
             if inheritedPlacedWithIdenticalMarshallables then
@@ -1488,8 +1483,6 @@ trait RemoteAccessorSynthesis:
                 Literal(BooleanConstant(original exists { _.isStable })),
                 reference(argumentMarshallable.symbol),
                 reference(resultMarshallable.symbol))
-
-              val locallyScoped = module hasAncestor { symbol => symbol.isMethod || symbol.isField }
 
               if !locallyScoped then
                 SymbolMutator.getOrErrorAndAbort.updateAnnotationWithTree(symbol, placedValueInfo(signature, arguments, result))
