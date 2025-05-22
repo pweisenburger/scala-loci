@@ -130,22 +130,13 @@ sealed trait PlacedCleanOf extends PlacedCleanSubjectivePlacedValue:
   given of[T <: Nothing, P, U](using PlacedClean[T, T, U])
     : PlacedClean[T of P, T of P, U] = erased
 
-sealed trait PlacedCleanAny extends PlacedCleanOf:
-  given any: PlacedClean[Any, Any, Any] = erased
-
-sealed trait PlacedCleanNull extends PlacedCleanAny:
-  given `null`: PlacedClean[Null, Null, Null] = erased
-
-sealed trait PlacedCleanNothingSubjective extends PlacedCleanNull:
-  given nothing: PlacedClean[Nothing, Nothing, Nothing] = erased
-
-sealed trait PlacedCleanAmbiguousResolutionBarrier extends PlacedCleanNothingSubjective:
+sealed trait PlacedCleanAmbiguousResolutionBarrier extends PlacedCleanOf:
   given anything[T, U](using DummyImplicit.Resolvable): PlacedClean[T, T, U] = erased
   given anythingAmbiguous[T, U](using DummyImplicit.Resolvable): PlacedClean[T, T, U] = erased
 
-object PlacedClean extends PlacedCleanAmbiguousResolutionBarrier:
+sealed trait PlacedCleanSynthesis extends PlacedCleanAmbiguousResolutionBarrier:
   transparent inline given clean[T](using DummyImplicit.Resolvable): PlacedClean[T, T, Nothing] =
-    ${ cleanExpr[T] }
+    ${ PlacedClean.cleanExpr[T] }
 
   def cleanExpr[T: Type](using Quotes) = cleanType[T] match
     case '[ t ] => '{ erased: PlacedClean[T, T, t] } match
@@ -200,4 +191,13 @@ object PlacedClean extends PlacedCleanAmbiguousResolutionBarrier:
 
     processor.transform(TypeRepr.of[T]).asType
   end cleanType
-end PlacedClean
+end PlacedCleanSynthesis
+
+sealed trait PlacedCleanAny extends PlacedCleanSynthesis:
+  given any: PlacedClean[Any, Any, Any] = erased
+
+sealed trait PlacedCleanNull extends PlacedCleanAny:
+  given `null`: PlacedClean[Null, Null, Null] = erased
+
+object PlacedClean extends PlacedCleanNull:
+  given nothing: PlacedClean[Nothing, Nothing, Nothing] = erased

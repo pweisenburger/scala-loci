@@ -422,9 +422,11 @@ trait PlacedValueSynthesis:
           if peer == defn.AnyClass &&
              (module.owner hasAncestor isMultitierModule) &&
              (parents forall { _.typeSymbol.maybeOwner.maybeOwner != symbol.maybeOwner.maybeOwner }) then
-            val placedValues = synthesizedPlacedValues(module.owner, defn.AnyClass).symbol
             val name = s"<${names.outerPlacedValues} of ${implementationForm(module.owner)} ${fullName(module.owner)}>"
-            newVal(symbol, name, placedValues.typeRef, Flags.ParamAccessor, Symbol.noSymbol) :: decls
+            val parameter = symbol.declaredField(name) orElse:
+              val placedValues = synthesizedPlacedValues(module.owner, defn.AnyClass).symbol
+              newVal(symbol, name, placedValues.typeRef, Flags.ParamAccessor, Symbol.noSymbol)
+            parameter :: decls
           else
             decls
         end symbolDecls

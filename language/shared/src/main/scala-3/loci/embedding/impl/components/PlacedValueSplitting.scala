@@ -156,7 +156,11 @@ trait PlacedValueSplitting:
 
     val placedBody = PeerInfo.ofModule(module.symbol) map: peerInfo =>
       val SynthesizedPlacedValues(placedValues, _, _, parents) = synthesizedPlacedValues(module.symbol, peerInfo.peerType.typeSymbol)
-      val params = placedValues.declaredFields collect { case symbol if symbol.isParamAccessor => ValDef(symbol, None) }
+      val params =
+        if !extendedNewSymbolAPI then
+          placedValues.declaredFields collect { case symbol if symbol.isParamAccessor => ValDef(symbol, None) }
+        else
+          List.empty
       val classDef = ClassDef(placedValues, parents map { parent => TypeTree.of(using parent.asType) }, params ++ placedBodies.getOrElse(placedValues, List.empty).reverse)
       ClassDef.copy(classDef)(classDef.name, DefDef(classDef.constructor.symbol, _ => None), classDef.parents, classDef.self, classDef.body)
 

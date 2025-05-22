@@ -452,10 +452,38 @@ trait Commons:
     symbol
 
   def newModule(parent: Symbol, name: String, modFlags: Flags, clsFlags: Flags, parents: List[TypeRepr], decls: Symbol => List[Symbol], privateWithin: Symbol) =
-    val symbol = Symbol.newModule(parent, name, Flags.EmptyFlags, Flags.EmptyFlags, parents, decls, privateWithin)
+    val symbol = newModuleSymbol(parent, name, Flags.EmptyFlags, Flags.EmptyFlags, parents, decls, privateWithin)
     SymbolMutator.getOrErrorAndAbort.setFlag(symbol, modFlags.cleaned)
     SymbolMutator.getOrErrorAndAbort.setFlag(symbol.moduleClass, clsFlags.cleaned)
     symbol
+
+  def newBoundedType(parent: Symbol, name: String, flags: Flags, tpe: TypeBounds, privateWithin: Symbol) =
+    val symbol = newBoundedTypeSymbol(parent, name, Flags.EmptyFlags, tpe, privateWithin)
+    symbol foreach { SymbolMutator.getOrErrorAndAbort.setFlag(_, flags.cleaned) }
+    symbol
+
+  def extendedNewSymbolAPI = newModuleSymbolExtendedVersion
+
+  private val (newModuleSymbolExtendedVersion, newModuleSymbol, newBoundedTypeSymbol) =
+    try
+      val newModule = Symbol.getClass.getMethod("newModule", classOf[Object], classOf[String], classOf[Object], classOf[Object], classOf[? => ?], classOf[? => ?], classOf[Object])
+      val newBoundedType = Symbol.getClass.getMethod("newBoundedType", classOf[Object], classOf[String], classOf[Object], classOf[Object], classOf[Object])
+      (true,
+        (parent: Symbol, name: String, modFlags: Flags, clsFlags: Flags, parents: List[TypeRepr], decls: Symbol => List[Symbol], privateWithin: Symbol) =>
+          newModule.invoke(Symbol, parent, name, modFlags, clsFlags, (_: Any) => parents, decls, privateWithin) match
+            case symbol: Symbol @unchecked => symbol,
+        (parent: Symbol, name: String, flags: Flags, tpe: TypeBounds, privateWithin: Symbol) =>
+          newBoundedType.invoke(Symbol, parent, name, flags, tpe, privateWithin) match
+            case symbol: Symbol @unchecked => Some(symbol))
+    catch
+      case NonFatal(_) =>
+        val newModule = Symbol.getClass.getMethod("newModule", classOf[Object], classOf[String], classOf[Object], classOf[Object], classOf[List[?]], classOf[? => ?], classOf[Object])
+        (false,
+          (parent: Symbol, name: String, modFlags: Flags, clsFlags: Flags, parents: List[TypeRepr], decls: Symbol => List[Symbol], privateWithin: Symbol) =>
+            newModule.invoke(Symbol, parent, name, modFlags, clsFlags, parents, decls, privateWithin) match
+              case symbol: Symbol @unchecked => symbol,
+          (parent: Symbol, name: String, flags: Flags, tpe: TypeBounds, privateWithin: Symbol) =>
+            None)
 
   def contextMethodType[T: Type, R: Type] =
     val Inlined(_, _, Block(List(lambda), _)) = '{ (_: T) ?=> ?[R] }.asTerm: @unchecked

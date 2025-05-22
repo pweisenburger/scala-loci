@@ -367,20 +367,23 @@ trait RemoteAccessorSynthesis:
         val symbol = tpe.typeSymbol
         if symbol.isTypeParam then
           masking.get(symbol) match
-            case Some(abstractTypeSymbol) =>
-              abstractTypeSymbol.typeRef
+            case Some(typeParamSymbol) =>
+              typeParamSymbol.typeRef
             case _ =>
               symbol.info match
                 case TypeBounds(low, hi) if low =:= hi =>
                   transform(low)
                 case TypeBounds(_, _) =>
-                  val presentation = tpe.safeShow
-                  val Inlined(_, _, Block(List(stat), _)) = '{ type `<Type Parameter>` }.asTerm: @unchecked
-                  val abstractTypeSymbol = stat.symbol
-                  SymbolMutator.get foreach { _.setTypeName(abstractTypeSymbol, presentation) }
-                  masking += symbol -> abstractTypeSymbol
-                  unmasking += abstractTypeSymbol -> tpe
-                  abstractTypeSymbol.typeRef
+                  val name = tpe.safeShow
+                  val typeParamSymbol =
+                    newBoundedType(Symbol.spliceOwner, name, Flags.Param, TypeBounds.empty, Symbol.noSymbol) getOrElse:
+                      val Inlined(_, _, Block(List(stat), _)) = '{ type `<Type Parameter>` }.asTerm: @unchecked
+                      val symbol = stat.symbol
+                      SymbolMutator.get foreach { _.setTypeName(symbol, name) }
+                      symbol
+                  masking += symbol -> typeParamSymbol
+                  unmasking += typeParamSymbol -> tpe
+                  typeParamSymbol.typeRef
                 case info @ (
                     _: NamedType | _: ParamRef | _: ThisType | _: SuperType | _: AppliedType |
                     _: Refinement | _: AndOrType | _: AnnotatedType | _: MatchType | _: ByNameType |
