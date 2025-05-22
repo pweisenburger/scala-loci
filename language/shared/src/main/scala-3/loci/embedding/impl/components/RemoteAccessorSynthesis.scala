@@ -245,6 +245,8 @@ trait RemoteAccessorSynthesis:
       map filterInPlace { (_, value) => mapping.get(value).isDefined } mapValuesInPlace { (_, value) => mapping.get(value).get }
       this
 
+  private val placedBlockSignature = "\\d>".r.unanchored
+
   private def argumentTypes(tpe: TypeRepr): List[List[TypeRepr]] = tpe match
     case MethodType(_, paramTypes, resType) =>
       paramTypes :: argumentTypes(resType)
@@ -266,6 +268,10 @@ trait RemoteAccessorSynthesis:
     if symbol.flags is Flags.Module then "object"
     else if symbol.flags is Flags.Trait then "trait"
     else "class"
+
+  private def accessorSignaturePrefix(module: Symbol) =
+    val signature = TypeToken.typeSignature(module.typeRef)
+    if signature.takeRight(2) == TypeToken.`type` then signature.init else signature :+ TypeToken.`#`
 
   private def accessorSignature(name: List[TypeToken], params: List[List[TypeRepr]], result: TypeRepr) =
     val paramsSignature = params flatMap: params =>
@@ -629,17 +635,8 @@ trait RemoteAccessorSynthesis:
 
   private def synthesizeAccessorsFromTree(module: Symbol, tree: ClassDef): Accessors =
     val mangledName = mangledSymbolName(module)
-
     val locallyScoped = module hasAncestor { symbol => symbol.isMethod || symbol.isField }
-
-    val signaturePrefix =
-      val signature =
-        serializeTypeAndSanityCheck(module.typeRef, module) map { (signature, _) => signature } getOrElse:
-          if !locallyScoped then
-            errorAndCancel(s"Failed to serialize type for ${prettyType(fullName(module))}.", tree.posInUserCode.firstCodeLine)
-          TypeToken.typeSignature(module.typeRef)
-      if signature.takeRight(2) == TypeToken.`type` then signature.init else signature :+ TypeToken.`#`
-
+    val signaturePrefix = accessorSignaturePrefix(module)
     val (identifier @ (identifierSymbol, _), signature @ (signatureSymbol, _), peers) = signatures(module)
 
     val defaultAccessorGeneration = if module.flags is Flags.Final then Required else Preferred
@@ -1563,7 +1560,10 @@ trait RemoteAccessorSynthesis:
   end synthesizeAccessorsFromTree
 
   private def synthesizeAccessorsFromClass(module: Symbol, moduleClass: Class[?]): Accessors =
-    synthesizeAllPlacedAccessors(module, includeFirst = false)
+    val signaturePrefix = accessorSignaturePrefix(module)
+
+    val inheritedPlacedAccessors =
+      synthesizeAllPlacedAccessors(module, includeFirst = false)
 
     SymbolMutator.getOrErrorAndAbort.invalidateMemberCaches(module)
 
@@ -1580,44 +1580,23 @@ trait RemoteAccessorSynthesis:
           Position.ofMacroExpansion.firstCodeLine)
         Array.empty[Method]
 
-    val moduleSignaturesCache = mutable.Map.empty[Symbol, Map[String, Symbol]]
+    val inheritedValues =
+      inheritedPlacedAccessors.iterator flatMap:
+        case (_: Int, _) => None
+        case (symbol: Symbol @unchecked, placed) => placedInfo(placed) map { (signature, _, _) => signature -> symbol }
 
-    def moduleSignatures(module: Symbol, signaturePrefix: List[TypeToken]) =
-      inline def signatures =
-        module.fieldMembers.iterator ++ module.methodMembers.iterator flatMap: member =>
-          if !(member.flags is Flags.Synthetic) && !(member.flags is Flags.Artifact) then
-            val tpe = ThisType(module).memberType(member)
-            PlacementInfo(tpe.resultType) flatMap: placementInfo =>
-              Option.unless(placementInfo.modality.local):
-                val info = if hasSyntheticMultitierContextArgument(member) then dropLastArgumentList(tpe) else tpe
-                accessorSignature(signaturePrefix :+ TypeToken(targetName(member)), argumentTypes(info), placementInfo.valueType) -> member
-          else
-            None
-      moduleSignaturesCache.getOrElseUpdate(module, signatures.toMap)
+    val declaredValues =
+      module.fieldMembers.iterator ++ module.methodMembers.iterator flatMap: member =>
+        if !(member.flags is Flags.Synthetic) && !(member.flags is Flags.Artifact) then
+          val tpe = ThisType(module).memberType(member)
+          PlacementInfo(tpe.resultType) flatMap: placementInfo =>
+            Option.unless(placementInfo.modality.local):
+              val info = if hasSyntheticMultitierContextArgument(member) then dropLastArgumentList(tpe) else tpe
+              accessorSignature(signaturePrefix :+ TypeToken(targetName(member)), argumentTypes(info), placementInfo.valueType) -> member
+        else
+          None
 
-    def resolveMarshallable(identifier: String) =
-      val name = marshallingName(identifier)
-      predefinedMarshallables find { _.symbol.name == name } orElse Marshallable(module.fieldMember(name), module)
-
-    def resolvePlacedValue(signature: String) =
-      import TypeToken.{`<`, `(`, `.`, `#`}
-      val `:` = TypeToken.`:`.head
-
-      def decompose(tokens: List[TypeToken]): Option[Option[(List[TypeToken], List[TypeToken], String)]] = tokens match
-        case `<` :: _ | `.` :: `<` :: _ | `#` :: `<` :: _ => None
-        case `.` :: name :: (`(` | `:`) :: _ => Some(Some(TypeToken.`type`, List(`.`), name.token))
-        case `#` :: name :: (`(` | `:`) :: _ => Some(Some(List.empty, List(`#`), name.token))
-        case token :: tokens => decompose(tokens) map { _ map { (path, prefix, name) => (token :: path, token :: prefix, name) } }
-        case _ => Some(None)
-
-      decompose(TypeToken.deserialize(signature)) map:
-        _ flatMap: (path, prefix, name) =>
-          TypeToken.toType(path) flatMap: tpe =>
-            val symbol = tpe.typeSymbol
-            if module.typeRef.baseClasses contains symbol then
-              moduleSignatures(symbol, prefix).get(signature)
-            else
-              None
+    val values = (inheritedValues ++ declaredValues).toMap
 
     declaredMethods foreach: method =>
       if (method.getName startsWith names.marshalling) &&
@@ -1660,31 +1639,36 @@ trait RemoteAccessorSynthesis:
          method.getParameterCount == 0 &&
          method.getReturnType == classes.placedValue then
         val placedValue = method.getAnnotation(classes.placedValueInfo)
-        if placedValue != null then
-          resolvePlacedValue(placedValue.signature) foreach: value =>
-            val valueMarshallables =
-              value flatMap: value =>
-                resolveMarshallable(placedValue.arguments) flatMap: arguments =>
-                  resolveMarshallable(placedValue.result) map: result =>
-                    (value, arguments, result)
+        if placedValue != null && !placedBlockSignature.matches(placedValue.signature) then
+          val value = values.get(placedValue.signature)
 
-            val resolutionFailure =
-              if value.isEmpty then "placed value"
-              else if valueMarshallables.isEmpty then "marshallable types"
-              else ""
+          def resolveMarshallable(identifier: String) =
+            val name = marshallingName(identifier)
+            predefinedMarshallables find { _.symbol.name == name } orElse Marshallable(module.fieldMember(name), module)
 
-            if resolutionFailure.nonEmpty then
-              val message = s"Failed to resolve $resolutionFailure for remote accessor in ${prettyType(fullName(module))}: $placedValue"
-              val pos = Position.ofMacroExpansion.firstCodeLine
-              report.warning(message, pos)
+          val valueMarshallables =
+            value flatMap: value =>
+              resolveMarshallable(placedValue.arguments) flatMap: arguments =>
+                resolveMarshallable(placedValue.result) map: result =>
+                  (value, arguments, result)
 
-            valueMarshallables foreach: (value, arguments, result) =>
-              val annotation = placedValueInfo(placedValue.signature, placedValue.arguments, placedValue.result)
-              val info = symbols.placedValue.typeRef.appliedTo(List(arguments.types.base, arguments.types.result, result.types.base, result.types.proxy))
-              val symbol = newVal(module, method.getName, info, Flags.Final | Flags.Protected, Symbol.noSymbol)
-              SymbolMutator.getOrErrorAndAbort.updateAnnotationWithTree(symbol, annotation)
-              injectFieldSymbol(symbol)
-              placed += value -> (symbol, None)
+          val resolutionFailure =
+            if value.isEmpty then "placed value"
+            else if valueMarshallables.isEmpty then "marshallable types"
+            else ""
+
+          if resolutionFailure.nonEmpty then
+            val message = s"Failed to resolve $resolutionFailure for remote accessor in ${prettyType(fullName(module))}: $placedValue"
+            val pos = Position.ofMacroExpansion.firstCodeLine
+            report.warning(message, pos)
+
+          valueMarshallables foreach: (value, arguments, result) =>
+            val annotation = placedValueInfo(placedValue.signature, placedValue.arguments, placedValue.result)
+            val info = symbols.placedValue.typeRef.appliedTo(List(arguments.types.base, arguments.types.result, result.types.base, result.types.proxy))
+            val symbol = newVal(module, method.getName, info, Flags.Final | Flags.Protected, Symbol.noSymbol)
+            SymbolMutator.getOrErrorAndAbort.updateAnnotationWithTree(symbol, annotation)
+            injectFieldSymbol(symbol)
+            placed += value -> (symbol, None)
 
     val (identifier, signature, peers) = signatures(module)
 
