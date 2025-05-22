@@ -180,6 +180,12 @@ trait Commons:
     val conversion = TypeRepr.of[Conversion[?, ?]]
     val seq = TypeRepr.of[Seq[?]]
 
+  object classes:
+    val marshallable = classOf[transmitter.Marshallable[?, ?, ?]]
+    val placedValue = classOf[runtime.PlacedValue[?, ?, ?, ?]]
+    val marshallableInfo = classOf[runtime.MarshallableInfo]
+    val placedValueInfo = classOf[runtime.PlacedValueInfo]
+
   object names:
     val apply = "apply"
     val tie = "Tie"
