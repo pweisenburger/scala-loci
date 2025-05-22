@@ -23,7 +23,7 @@ object TypeToken:
     tokens.toList map { token(_) }
 
   private inline def isEscapedCharacter(ch: Char) =
-    !Character.isJavaIdentifierPart(ch)
+    !Character.isJavaIdentifierPart(ch) && !Character.isLowSurrogate(ch) && !Character.isHighSurrogate(ch)
 
   private inline def isEscapedInitialCharacter(ch: Char) =
     isEscapedCharacter(ch) || Character.isDigit(ch)
@@ -78,6 +78,8 @@ object TypeToken:
   val `;` = tokens(";", " ")
   val `&` = tokens(" ", "&", " ")
   val `|` = tokens(" ", "|", " ")
+  val `this` = tokens(".", "this")
+  val `type` = tokens(".", "type")
 
   def serialize(tokens: List[TypeToken]): String =
     (tokens flatMap { _.escaped }).mkString
@@ -100,56 +102,58 @@ object TypeToken:
       case tpe: ByNameType => underlying(tpe.underlying)
       case _ => tpe
 
-    def symbolSignature(symbol: Symbol): List[TypeToken] =
+    def symbolSignature(symbol: Symbol, pathPrefix: Boolean): List[TypeToken] =
       val name = (if symbol.isClassDef && symbol.isModuleDef then symbol.companionModule else symbol).name
+      val suffix = if !pathPrefix && symbol.isClassDef && symbol.isModuleDef then `type` else List.empty
       if symbol.isPackageObject then
-        symbolSignature(symbol.owner)
+        symbolSignature(symbol.owner, pathPrefix)
       else if symbol.maybeOwner == defn.RootClass then
-        List(escape(name))
+        escape(name) :: suffix
       else if symbol.maybeOwner.isClassDef && !symbol.maybeOwner.isPackageDef && !symbol.maybeOwner.isModuleDef then
-        symbolSignature(symbol.maybeOwner) ++ List(`#`, escape(name))
+        symbolSignature(symbol.maybeOwner, pathPrefix = true) ++ List(`#`, escape(name)) ++ suffix
       else if symbol.maybeOwner.exists then
-        symbolSignature(symbol.maybeOwner) ++ List(`.`, escape(name))
+        symbolSignature(symbol.maybeOwner, pathPrefix = true) ++ List(`.`, escape(name)) ++ suffix
       else
-        List(escape(name))
+        escape(name) :: suffix
 
-    def typeSignature(tpe: TypeRepr): List[TypeToken] =
+    def typeSignature(tpe: TypeRepr, pathPrefix: Boolean): List[TypeToken] =
       underlying(tpe.dealiasNonOpaque) match
         case _: AndType | _: OrType if tpe.typeSymbol.exists =>
-          symbolSignature(tpe.typeSymbol)
+          symbolSignature(tpe.typeSymbol, pathPrefix)
         case Tuple(elements) =>
           tuple(elements.size)
         case tpe: ByNameType =>
-          typeSignature(tpe.underlying)
-        case tpe: TermRef if tpe.termSymbol.isPackageObject && tpe.qualifier =:= tpe.termSymbol.owner.typeRef =>
-          typeSignature(tpe.qualifier)
+          typeSignature(tpe.underlying, pathPrefix)
         case tpe: TypeRef =>
-          tpe.qualifier.resolvedTypeMemberType(tpe.name).fold(any) { typeSignature }
-        case tpe: NamedType =>
+          tpe.qualifier.resolvedTypeMemberType(tpe.name).fold(any) { typeSignature(_, pathPrefix = true) }
+        case tpe: TermRef if tpe.termSymbol.isPackageObject && tpe.qualifier =:= tpe.termSymbol.owner.typeRef =>
+          typeSignature(tpe.qualifier, pathPrefix = true)
+        case tpe: TermRef =>
           val symbol = tpe.typeSymbol
           if symbol.exists then
-            val prefix = typeSignature(tpe.qualifier)
-            val suffix = escape(if symbol.isClassDef && symbol.isModuleDef then symbol.companionModule.name else tpe.name)
+            val prefix = typeSignature(tpe.qualifier, pathPrefix = true)
+            val name = escape(if symbol.isClassDef && symbol.isModuleDef then symbol.companionModule.name else tpe.name)
+            val suffix = if pathPrefix then List.empty else `type`
             tpe.qualifier match
               case _ if tpe.qualifier.typeSymbol == defn.RootClass =>
-                List(suffix)
+                name :: suffix
               case NoPrefix() =>
-                List(suffix)
+                name :: suffix
               case TermRef(_, _) =>
-                prefix ++ List(`.`, suffix)
+                prefix ++ (`.` :: name :: suffix)
               case _ if tpe.qualifier.typeSymbol.isModuleDef || tpe.qualifier.typeSymbol.isPackageDef =>
-                prefix ++ List(`.`, suffix)
+                prefix ++ (`.` :: name :: suffix)
               case _ =>
-                prefix ++ List(`#`, suffix)
+                prefix ++ (`#` :: name :: suffix)
           else
             any
         case tpe if tpe.typeSymbol.exists =>
-          symbolSignature(tpe.typeSymbol)
+          symbolSignature(tpe.typeSymbol, pathPrefix)
         case tpe: TypeBounds =>
-          typeSignature(tpe.hi)
+          typeSignature(tpe.hi, pathPrefix = false)
         case tpe: AndType =>
-          val left = typeSignature(tpe.left)
-          val right = typeSignature(tpe.right)
+          val left = typeSignature(tpe.left, pathPrefix = false)
+          val right = typeSignature(tpe.right, pathPrefix = false)
           if left == any then
             right
           else if right == any then
@@ -169,8 +173,8 @@ object TypeToken:
                 case _ => right
             leftTokens ++ TypeToken.`&` ++ rightTokens
         case tpe: OrType =>
-          val left = typeSignature(tpe.left)
-          val right = typeSignature(tpe.right)
+          val left = typeSignature(tpe.left, pathPrefix = false)
+          val right = typeSignature(tpe.right, pathPrefix = false)
           if left == any || right == any then any
           else left ++ TypeToken.`|` ++ right
         case ConstantType(BooleanConstant(value)) =>
@@ -201,14 +205,14 @@ object TypeToken:
     def potentialMethodTypeSignature(tpe: TypeRepr, isMethodType: Boolean): List[TypeToken] = tpe match
       case tpe: ByNameType =>
         if isMethodType then
-          typeSignature(tpe.underlying)
+          typeSignature(tpe.underlying, pathPrefix = false)
         else
-          `:` ++  typeSignature(tpe.underlying)
+          `:` ++  typeSignature(tpe.underlying, pathPrefix = false)
 
       case tpe: PolyType =>
         tpe.resType match
           case _: MethodOrPoly => potentialMethodTypeSignature(tpe.resType, isMethodType = true)
-          case _ => `:` ++ typeSignature(tpe.resType)
+          case _ => `:` ++ typeSignature(tpe.resType, pathPrefix = false)
 
       case tpe: MethodType =>
         val separator = tpe.resType match
@@ -216,7 +220,7 @@ object TypeToken:
           case _ => `:`
 
         val params = tpe.paramTypes.foldRight(List.empty[TypeToken]): (tpe, params) =>
-          val param = typeSignature(tpe)
+          val param = typeSignature(tpe, pathPrefix = false)
           if params.isEmpty then param else param ++ (`,` ++ params)
 
         val resType = potentialMethodTypeSignature(tpe.resType, isMethodType = true)
@@ -224,7 +228,7 @@ object TypeToken:
         `(` :: (params :+ `)`) ++ separator ++ resType
 
       case _ =>
-        typeSignature(tpe)
+        typeSignature(tpe, pathPrefix = false)
     end potentialMethodTypeSignature
 
     potentialMethodTypeSignature(tpe, isMethodType = false)
@@ -298,14 +302,11 @@ object TypeToken:
         serializeType(tpe.qualifier, binders, path, pathPrefix)
       case tpe: NamedType =>
         val symbol = tpe.typeSymbol
-        val termName =
-          tpe match
-            case _: TypeRef if !pathPrefix && symbol.isClassDef && symbol.isModuleDef =>
-              Some(symbol.companionModule.name)
-            case _: TermRef =>
-              Some(tpe.name)
-            case _ =>
-              None
+        val termName = tpe match
+          case _: TypeRef if !pathPrefix && symbol.isClassDef && symbol.isModuleDef => Some(symbol.companionModule.name)
+          case _: TermRef if symbol.isClassDef && symbol.isModuleDef => Some(symbol.companionModule.name)
+          case _: TermRef => Some(tpe.name)
+          case _ => None
         val reference =
           tpe.qualifier match
             case TermRef(NoPrefix(), "_root_") | TypeRef(NoPrefix(), "_root_") =>
@@ -320,7 +321,7 @@ object TypeToken:
               serializeType(tpe.qualifier, binders, path = true, pathPrefix = true) map: prefix =>
                 prefix ++ List(`#`, escape(termName getOrElse tpe.name))
         termName.fold(reference): _ =>
-          if pathPrefix then reference else reference map { _ ++ tokens(".", "type") }
+          if pathPrefix then reference else reference map { _ ++ `type` }
       case tpe: ThisType =>
         val symbol = tpe.tref.typeSymbol
         if symbol == defn.RootClass then
@@ -328,12 +329,12 @@ object TypeToken:
         else
           val outerChain =
             Option.ensure(from != defn.RootClass && !globallyReachablePrefix(symbol.maybeOwner)):
-              serializeOuterChain(from, symbol) map { _ ++ tokens(".", "this") }
+              serializeOuterChain(from, symbol) map { _ ++ `this` }
           val chain =
             outerChain orElse:
               val chain = serializeSymbol(symbol)
-              if symbol.isPackageDef || symbol.isModuleDef then chain else  chain map { _ ++ tokens(".", "this") }
-          if pathPrefix then chain else chain map { _ ++ tokens(".", "type") }
+              if symbol.isPackageDef || symbol.isModuleDef then chain else  chain map { _ ++ `this` }
+          if pathPrefix then chain else chain map { _ ++ `type` }
       case tpe: AppliedType =>
         val args = tpe.args.foldRight(Option(List.empty[TypeToken])): (tpe, args) =>
           serializeType(tpe, binders, path = false, pathPrefix = false) flatMap: tpe =>
@@ -388,29 +389,29 @@ object TypeToken:
       case tpe: TypeBounds =>
         serializeTypeBounds(tpe, binders) map { token("?") :: _ }
       case ConstantType(BooleanConstant(value)) =>
-        Some(tokens(value.toString, ".", "type"))
+        Some(token(value.toString) :: `type`)
       case ConstantType(ByteConstant(value)) =>
-        Some(tokens(s"${value.toString}b", ".", "type"))
+        Some(token(s"${value.toString}b") :: `type`)
       case ConstantType(ShortConstant(value)) =>
-        Some(tokens(s"${value.toString}s", ".", "type"))
+        Some(token(s"${value.toString}s") :: `type`)
       case ConstantType(IntConstant(value)) =>
-        Some(tokens(s"${value.toString}i", ".", "type"))
+        Some(token(s"${value.toString}i") :: `type`)
       case ConstantType(LongConstant(value)) =>
-        Some(tokens(s"${value.toString}l", ".", "type"))
+        Some(token(s"${value.toString}l") :: `type`)
       case ConstantType(FloatConstant(value)) =>
-        Some(tokens(s"${value.toString}f", ".", "type"))
+        Some(token(s"${value.toString}f") :: `type`)
       case ConstantType(DoubleConstant(value)) =>
-        Some(tokens(s"${value.toString}d", ".", "type"))
+        Some(token(s"${value.toString}d") :: `type`)
       case ConstantType(CharConstant(value)) =>
         val TypeToken(token, escaped) = escape(value.toString)
-        Some(TypeToken(s"\'$token\'", s"\'$escaped\'") :: tokens(".", "type"))
+        Some(TypeToken(s"\'$token\'", s"\'$escaped\'") :: `type`)
       case ConstantType(StringConstant(value)) =>
         val TypeToken(token, escaped) = escape(value)
-        Some(TypeToken(s"\"$token\"", s"\"$escaped\"") :: tokens(".", "type"))
+        Some(TypeToken(s"\"$token\"", s"\"$escaped\"") :: `type`)
       case ConstantType(UnitConstant()) =>
-        Some(tokens("()", ".", "type"))
+        Some(`(` :: `)` :: `type`)
       case ConstantType(NullConstant()) =>
-        Some(tokens("null", ".", "type"))
+        Some(token("null") :: `type`)
       case _ =>
         None
 
@@ -516,10 +517,6 @@ object TypeToken:
         buildToken()
         next()
         tokens ::= token("=>")
-      case '(' if hasNext && peak() == ')' =>
-        buildToken()
-        next()
-        tokens ::= token("()")
       case ch
         if isTokenCharacter(ch) ||
            ch == '.' && hasNext && Character.isDigit(peak()) ||
@@ -624,6 +621,10 @@ object TypeToken:
         termParams: Map[String, TypeRepr],
         lookupParams: Boolean): Option[TypeRepr] =
       tokens match
+        case token("(") :: token(")") :: token(".") :: token("type") :: tokens =>
+          Option.ensure(prefix.isEmpty && tokens.isEmpty):
+            deserializeType(markPrefixPath(tokens), Some(ConstantType(UnitConstant())), typeParams, termParams, lookupParams = false)
+
         case value :: token(".") :: token("type") :: tokens
             if (isEscapedInitialCharacter(value.escaped.head) && value.escaped.head != '\\') || isSpecialToken(value.escaped) =>
           val tpe =
@@ -650,8 +651,6 @@ object TypeToken:
                       Some(ConstantType(FloatConstant(value.token.init.toFloat)))
                     else if value.token endsWith "d" then
                       Some(ConstantType(DoubleConstant(value.token.init.toDouble)))
-                    else if value.token == "()" then
-                      Some(ConstantType(UnitConstant()))
                     else if value.token == "null" then
                       Some(ConstantType(NullConstant()))
                     else
@@ -812,14 +811,12 @@ object TypeToken:
         termParams: Map[String, TypeRepr],
         isMethodType: Boolean): Option[TypeRepr] =
       tokens match
-        case token(value @ ("(" | "()")) :: tail =>
-          val params =
-            if value == "()" then
-              Some(List.empty, tail)
-            else
-              separateNested(tokens)
+        case token("(") :: token(")") :: token(".") :: token("type") :: _  =>
+          Option.ensure(!isMethodType):
+            deserializeType(tokens, None, typeParams, termParams, lookupParams = false)
 
-          params flatMap: (paramTokens, tail) =>
+        case token("(") :: _ =>
+          separateNested(tokens) flatMap: (paramTokens, tail) =>
             val params = paramTokens.foldRight(Option(List.empty[(String, TypeRepr)])):
               case (name :: token(":") :: tokens, params) =>
                 params flatMap: params =>
