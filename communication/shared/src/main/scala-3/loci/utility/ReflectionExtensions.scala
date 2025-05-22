@@ -697,7 +697,7 @@ object reflectionExtensions:
     private val nil = TypeRepr.of[EmptyTuple].typeSymbol
     private val cons = TypeRepr.of[? *: ?].typeSymbol
 
-    @targetName("unapplyType")
+    @targetName("applyType")
     def apply(elements: List[TypeRepr]): TypeRepr =
       if elements.nonEmpty && elements.sizeIs < 23 then
         defn.TupleClass(elements.size).typeRef.appliedTo(elements)
@@ -705,7 +705,7 @@ object reflectionExtensions:
         elements.foldRight[TypeRepr](nil.typeRef): (tpe, tuple) =>
           cons.typeRef.appliedTo(List(tpe, tuple))
 
-    @targetName("unapplyTerm")
+    @targetName("applyTerm")
     def apply(elements: List[Term]): Term =
       if elements.nonEmpty && elements.sizeIs < 23 then
         Select.unique(Ref(defn.TupleClass(elements.size).companionModule), "apply")
