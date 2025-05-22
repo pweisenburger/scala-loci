@@ -193,8 +193,8 @@ trait RemoteAccessorSynthesis:
     def predefined(symbol: Symbol): Marshallable =
       Marshallable(symbol, MarshallableTypes(symbol.typeRef), unknownSignature)
 
-  private class AccessorResolution(var transmittable: Option[Transmittable], var marshallable: Option[Option[(Marshallable, Either[Symbol, ValDef])]], var allowSkippingAbstract: Boolean):
-    def this(transmittable: Option[Transmittable], marshallable: Option[Option[(Marshallable, Either[Symbol, ValDef])]]) = this(transmittable, marshallable, true)
+  private class AccessorResolution(var transmittable: Option[Transmittable], var marshallable: Option[Option[(Marshallable, Option[ValDef])]], var allowSkippingAbstract: Boolean):
+    def this(transmittable: Option[Transmittable], marshallable: Option[Option[(Marshallable, Option[ValDef])]]) = this(transmittable, marshallable, true)
     def this() = this(None, None, true)
 
   sealed class CachedTypeSeqMap[+T]:
@@ -331,6 +331,15 @@ trait RemoteAccessorSynthesis:
     else
       s"${names.marshalling}${name.replace(':', '$')}"
 
+  private def strippedSingleLineMessage(message: String) =
+    val stripped = message.strip
+    val index = stripped indexWhere { ch => ch == '\r' || ch == '\n' }
+    if index < 0 then stripped else stripped.substring(0, index)
+
+  private def periodTerminatedStrippedSingleLineMessage(message: String) =
+    val stripped = strippedSingleLineMessage(message)
+    if stripped.nonEmpty && stripped.last == '.' then stripped else stripped + '.'
+
   private object PlacedBlock:
     def unapply(term: Term) = term match
       case Apply(Apply(invocation @ TypeApply(Select(prefix, _), _ :: value :: _), List(lambda @ Lambda(List(_), block))), _)
@@ -350,15 +359,14 @@ trait RemoteAccessorSynthesis:
       case _ => None
 
   private object typeParamMasker:
-    private var symbolSubstitutions = Map.empty[Symbol, Symbol]
-    private var symbolSubstitutionsReverse = Map.empty[Symbol, TypeRepr]
-    private var presentationSubstitutionsReverse = Map.empty[String, String]
+    private var masking = Map.empty[Symbol, Symbol]
+    private var unmasking = Map.empty[Symbol, TypeRepr]
 
     private object typeParamTypeMasker extends TypeMap(quotes):
       override def transform(tpe: TypeRepr) =
         val symbol = tpe.typeSymbol
         if symbol.isTypeParam then
-          symbolSubstitutions.get(symbol) match
+          masking.get(symbol) match
             case Some(abstractTypeSymbol) =>
               abstractTypeSymbol.typeRef
             case _ =>
@@ -367,13 +375,11 @@ trait RemoteAccessorSynthesis:
                   transform(low)
                 case TypeBounds(_, _) =>
                   val presentation = tpe.safeShow
-                  val abstractTypePresentation = s"<Some Abstract Type: $presentation>"
-                  val Inlined(_, _, Block(List(stat), _)) = '{ type `<Some Abstract Type>` }.asTerm
+                  val Inlined(_, _, Block(List(stat), _)) = '{ type `<Type Parameter>` }.asTerm: @unchecked
                   val abstractTypeSymbol = stat.symbol
-                  SymbolMutator.get foreach { _.setTypeName(abstractTypeSymbol, abstractTypePresentation) }
-                  symbolSubstitutions += symbol -> abstractTypeSymbol
-                  symbolSubstitutionsReverse += abstractTypeSymbol -> tpe
-                  presentationSubstitutionsReverse += abstractTypePresentation -> presentation
+                  SymbolMutator.get foreach { _.setTypeName(abstractTypeSymbol, presentation) }
+                  masking += symbol -> abstractTypeSymbol
+                  unmasking += abstractTypeSymbol -> tpe
                   abstractTypeSymbol.typeRef
                 case info @ (
                     _: NamedType | _: ParamRef | _: ThisType | _: SuperType | _: AppliedType |
@@ -388,7 +394,7 @@ trait RemoteAccessorSynthesis:
 
     private object typeParamTypeUnmasker extends TypeMap(quotes):
       override def transform(tpe: TypeRepr) =
-        symbolSubstitutionsReverse.getOrElse(tpe.typeSymbol, super.transform(tpe))
+        unmasking.getOrElse(tpe.typeSymbol, super.transform(tpe))
 
     private object typeParamTermUnmasker extends SafeTreeMap(quotes):
       override def transformTypeTree(tree: TypeTree)(owner: Symbol) = tree match
@@ -396,7 +402,7 @@ trait RemoteAccessorSynthesis:
           val tpe = typeParamTypeUnmasker.transform(tree.tpe)
           if tpe != tree.tpe then TypeTree.of(using tpe.asType) else tree
         case TypeIdent(_) | TypeSelect(_, _) =>
-          symbolSubstitutionsReverse.get(tree.tpe.typeSymbol) match
+          unmasking.get(tree.tpe.typeSymbol) match
             case Some(tpe) if tpe != tree.tpe => TypeTree.of(using tpe.asType)
             case _ => super.transformTypeTree(tree)(owner)
         case _ =>
@@ -408,17 +414,12 @@ trait RemoteAccessorSynthesis:
     def unmask(term: Term): Term =
       typeParamTermUnmasker.transformTerm(term)(Symbol.spliceOwner)
 
-    def unmask(presentation: String): String =
-      presentationSubstitutionsReverse.foldLeft(presentation):
-        case (current, (presentation, abstractTypePresentation)) => current.replace(presentation, abstractTypePresentation)
-
     def masked(symbol: Symbol): Boolean =
-      symbolSubstitutionsReverse contains symbol
+      unmasking contains symbol
 
     def clear(): Unit =
-      symbolSubstitutions = Map.empty
-      symbolSubstitutionsReverse = Map.empty
-      presentationSubstitutionsReverse = Map.empty
+      masking = Map.empty
+      unmasking = Map.empty
   end typeParamMasker
 
   private object Resolution:
@@ -429,12 +430,9 @@ trait RemoteAccessorSynthesis:
 
     object Result:
       def apply(tree: Term) =
-        def withPeriod(message: String) =
-          val stripped = message.strip
-          if stripped.nonEmpty && stripped.last == '.' then stripped else stripped + '.'
         resolutionFailureCollector.foldTree(None, tree)(Symbol.noSymbol) match
-          case Some(message, false) => Failure(withPeriod(message))
-          case Some(message, true) => FailureOnTypeParameter(withPeriod(message), tree)
+          case Some(message, false) => Failure(periodTerminatedStrippedSingleLineMessage(message))
+          case Some(message, true) => FailureOnTypeParameter(periodTerminatedStrippedSingleLineMessage(message), tree)
           case _ => Success(tree)
 
       extension (self: Result)
@@ -464,8 +462,8 @@ trait RemoteAccessorSynthesis:
             failure match
               case Some(_, false) => failure
               case Some(_, true) if typeParam => foldOverTree(failure, tree)(owner)
-              case _ if typeParam => foldOverTree(Some(typeParamMasker.unmask(message), typeParam), tree)(owner)
-              case _ => Some(typeParamMasker.unmask(message), typeParam)
+              case _ if typeParam => foldOverTree(Some(message, typeParam), tree)(owner)
+              case _ => Some(message, typeParam)
         case _ =>
           foldOverTree(failure, tree)(owner)
 
@@ -476,7 +474,7 @@ trait RemoteAccessorSynthesis:
         val result =
           noMacroCheck(Implicits.search(typeParamMasker.mask(tpe))) match
             case result: ImplicitSearchSuccess => Result(typeParamMasker.unmask(result.tree))
-            case _ => Result.Failure(typeParamMasker.unmask(message))
+            case _ => Result.Failure(message)
         cache.addNewTypeEntry(tpe, result)
         result
 
@@ -1084,7 +1082,7 @@ trait RemoteAccessorSynthesis:
                     body flatMap: body =>
                       marshallable(transmittableSignature, transmittableTypes.asMarshallableTypes, body, flags, generateMarshallableName) map: (marshallable, definition) =>
                         info(s"    Selecting ${marshallable.types.show} [signature ${marshallable.signature}]")
-                        resolution.marshallable = Some(Some(marshallable, Right(definition)))
+                        resolution.marshallable = Some(Some(marshallable, Some(definition)))
                         Some(marshallable)
                   else
                     info("    Skipping synthesis of abstract Marshallable")
@@ -1094,7 +1092,7 @@ trait RemoteAccessorSynthesis:
                   Left(transmittableResolutionFailureMessage(transmittableTypes))
 
         generatedMarshallable.left foreach: message =>
-          info(s"    Synthesis failed: $message")
+          info(s"    Synthesis failed: ${strippedSingleLineMessage(message)}")
 
         generatedMarshallable
       end generateMarshallable
@@ -1178,7 +1176,7 @@ trait RemoteAccessorSynthesis:
               info(s"    Selecting inherited ${marshallable.types.show} [signature ${marshallable.signature}]")
               val accessor = resolution getOrElse accessorResolutionTypeMap.addNewTypeEntry(required.base, AccessorResolution())
               val (types, signature) = accessorTransmittableInfo(accessor, marshallable.types)
-              accessor.marshallable = Some(Some(marshallable, Left(marshallable.symbol)))
+              accessor.marshallable = Some(Some(marshallable, None))
               accessor.allowSkippingAbstract &= allowSkippingAbstract
               () => generateMarshallable(accessor, types, signature, () => Right(None))
 
@@ -1199,7 +1197,7 @@ trait RemoteAccessorSynthesis:
                   case Some(resolution) =>
                     resolution.allowSkippingAbstract &= allowSkippingAbstract
                     resolution.marshallable match
-                      case Some(Some(marshallable, Left(_))) if resolution.transmittable.isEmpty =>
+                      case Some(Some(marshallable, None)) if resolution.transmittable.isEmpty =>
                         info(s"    Revoking inherited ${marshallable.types.show} [signature ${marshallable.signature}] due to $Forced Mode")
                         resolution.marshallable = None
                       case _ =>
@@ -1221,7 +1219,7 @@ trait RemoteAccessorSynthesis:
                 case Some(resolution) =>
                   resolution.allowSkippingAbstract &= allowSkippingAbstract
                   resolution.marshallable match
-                    case Some(Some(marshallable, Left(_))) if !conformsToRequiredMarshallable(marshallable.types) =>
+                    case Some(Some(marshallable, None)) if !conformsToRequiredMarshallable(marshallable.types) =>
                       info(s"    Revoking inherited ${marshallable.types.show} [signature ${marshallable.signature}] due to type mismatch")
                       resolution.marshallable = None
                       Left(Some(resolution))
@@ -1236,7 +1234,7 @@ trait RemoteAccessorSynthesis:
                           accessorTransmittableInfo(resolution, marshallable.types)
                         val generatedMarshallable =
                           checkAccessorTransmittableTypesConformation(types, resolution):
-                            info(s"    Selecting ${if definition.isRight then "synthesized" else "inherited"} ${marshallable.types.show} [signature ${marshallable.signature}]")
+                            info(s"    Selecting ${if definition.isDefined then "synthesized" else "inherited"} ${marshallable.types.show} [signature ${marshallable.signature}]")
                             Right(() => generateMarshallable(resolution, types, signature, () => Right(None)))
                         if generatedMarshallable.isLeft then
                           Right(lookupInheritedMarshallable(Some(resolution), None).fold(generatedMarshallable) { Right(_) })
@@ -1448,56 +1446,59 @@ trait RemoteAccessorSynthesis:
             val arguments = marshallingIdentifier(argumentMarshallable.symbol.name)
             val result = marshallingIdentifier(resultMarshallable.symbol.name)
 
+            val key = original getOrElse:
+              val key = anonymousPlacedIndex
+              anonymousPlacedIndex += 1
+              key
+
             val inheritedPlacedWithIdenticalMarshallables =
-              original exists: original =>
-                Iterator(original) ++ original.allOverriddenSymbols collectFirst Function.unlift(inheritedPlacedAccessors.get) exists:
-                  placedInfo(_) exists:
-                    case (_, `arguments`, `result`) => true
-                    case _ => false
+              original flatMap: original =>
+                Iterator(original) ++ original.allOverriddenSymbols collectFirst Function.unlift:
+                  inheritedPlacedAccessors.get(_) flatMap: symbol =>
+                    placedInfo(symbol) match
+                      case Some(_, `arguments`, `result`) => Some(symbol)
+                      case _ => None
 
-            if inheritedPlacedWithIdenticalMarshallables then
-              info("    Skipping synthesis because placed value is already associated to resolved Marshallable")
+            inheritedPlacedWithIdenticalMarshallables match
+              case Some(symbol) =>
+                info("    Skipping synthesis because placed value is already associated to resolved Marshallable")
+                Some(key -> (symbol, None))
 
-            Option.unless(inheritedPlacedWithIdenticalMarshallables):
-              val name = s"${names.placed}$mangledName$$$placedIndex"
-              placedIndex += 1
+              case _ =>
+                val name = s"${names.placed}$mangledName$$$placedIndex"
+                placedIndex += 1
 
-              val signatureConstruction =
-                Ref(symbols.valueSignature).appliedTo(
-                  Literal(StringConstant(signature)),
-                  Ref(identifierSymbol),
-                  Ref(signatureSymbol).select(symbols.valueSignaturePath))
+                val signatureConstruction =
+                  Ref(symbols.valueSignature).appliedTo(
+                    Literal(StringConstant(signature)),
+                    Ref(identifierSymbol),
+                    Ref(signatureSymbol).select(symbols.valueSignaturePath))
 
-              val info = symbols.placedValue.typeRef.appliedTo(
-                List(
-                  argumentMarshallable.types.base,
-                  argumentMarshallable.types.result,
-                  resultMarshallable.types.base,
-                  resultMarshallable.types.proxy))
-              val symbol = newVal(module, name, info, Flags.Final | Flags.Protected, Symbol.noSymbol)
-              injectFieldSymbol(symbol)
+                val info = symbols.placedValue.typeRef.appliedTo(
+                  List(
+                    argumentMarshallable.types.base,
+                    argumentMarshallable.types.result,
+                    resultMarshallable.types.base,
+                    resultMarshallable.types.proxy))
+                val symbol = newVal(module, name, info, Flags.Final | Flags.Protected, Symbol.noSymbol)
+                injectFieldSymbol(symbol)
 
-              inline def reference(symbol: Symbol) =
-                if symbol.owner.owner == types.marshallable.typeSymbol.companionModule.moduleClass then
-                  Ref(symbol)
-                else
-                  This(module).select(symbol)
+                inline def reference(symbol: Symbol) =
+                  if symbol.owner.owner == types.marshallable.typeSymbol.companionModule.moduleClass then
+                    Ref(symbol)
+                  else
+                    This(module).select(symbol)
 
-              val rhs = New(TypeIdent(symbols.placedValue)).select(symbols.placedValue.primaryConstructor).appliedToTypes(info.typeArgs).appliedTo(
-                signatureConstruction,
-                Literal(BooleanConstant(original exists { _.isStable })),
-                reference(argumentMarshallable.symbol),
-                reference(resultMarshallable.symbol))
+                val rhs = New(TypeIdent(symbols.placedValue)).select(symbols.placedValue.primaryConstructor).appliedToTypes(info.typeArgs).appliedTo(
+                  signatureConstruction,
+                  Literal(BooleanConstant(original exists { _.isStable })),
+                  reference(argumentMarshallable.symbol),
+                  reference(resultMarshallable.symbol))
 
-              if !locallyScoped then
-                SymbolMutator.getOrErrorAndAbort.updateAnnotationWithTree(symbol, placedValueInfo(signature, arguments, result))
+                if !locallyScoped then
+                  SymbolMutator.getOrErrorAndAbort.updateAnnotationWithTree(symbol, placedValueInfo(signature, arguments, result))
 
-              val key = original getOrElse:
-                val key = anonymousPlacedIndex
-                anonymousPlacedIndex += 1
-                key
-
-              key -> (symbol, Some(ValDef(symbol, Some(rhs))))
+                Some(key -> (symbol, Some(ValDef(symbol, Some(rhs)))))
       else
         None
     end accessors
@@ -1545,10 +1546,10 @@ trait RemoteAccessorSynthesis:
     val marshalling =
       val marshallables = (overriding.iterator map { (symbol, _) => symbol }).toSet
       accessorResolutionTypeMap flatMapValues:
-        _.marshallable.flatten flatMap: (_, marshallable) =>
-          val symbol = (marshallable map { _.symbol }).merge
+        _.marshallable.flatten flatMap: (marshallable, definition) =>
+          val symbol = definition map { _.symbol } getOrElse marshallable.symbol
           Option.unless(marshallables contains symbol):
-            (symbol, marshallable.toOption)
+            (symbol, definition)
 
     val placed = accessors.to(SeqMap)
 
