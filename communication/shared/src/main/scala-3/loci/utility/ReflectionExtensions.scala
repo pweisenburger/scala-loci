@@ -143,10 +143,12 @@ object reflectionExtensions:
 
       inline def inUserCode(pos: Position) =
         try
+          pos.toString != "?" &&
           pos.sourceFile == splicePos.sourceFile &&
           pos.start >= splicePos.start &&
           pos.end <= splicePos.end &&
-          (pos.start != splicePos.start || (pos.end != splicePos.start && pos.end != splicePos.end))
+          pos.start != splicePos.end &&
+          pos.end != splicePos.start
         catch
           case NonFatal(_) => false
 
