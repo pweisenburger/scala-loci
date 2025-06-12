@@ -53,14 +53,15 @@ object Multitier:
 
     object preprocessor extends SafeTreeMap(quotes):
       def trySwapMultitierAnnotation(symbol: Symbol) =
-        SymbolMutator.get foreach: symbolMutator =>
-          val instantiation = New(TypeIdent(symbols.`embedding.multitier`))
-          val annotation =
-            multitierModuleArgument(symbol) match
-              case Some(arg) => instantiation.select(symbols.`embedding.multitier`.declarations.last).appliedTo(arg)
-              case _ => instantiation.select(symbols.`embedding.multitier`.declarations.head).appliedToNone
-          symbolMutator.removeAnnotation(symbol, symbols.`language.multitier`)
-          symbolMutator.updateAnnotationWithTree(symbol, annotation)
+        if symbol.hasAnnotation(symbols.`language.multitier`) then
+          SymbolMutator.get foreach: symbolMutator =>
+            val instantiation = New(TypeIdent(symbols.`embedding.multitier`))
+            val annotation =
+              multitierModuleArgument(symbol) match
+                case Some(arg) => instantiation.select(symbols.`embedding.multitier`.declarations.last).appliedTo(arg)
+                case _ => instantiation.select(symbols.`embedding.multitier`.declarations.head).appliedToNone
+            symbolMutator.removeAnnotation(symbol, symbols.`language.multitier`)
+            symbolMutator.updateAnnotationWithTree(symbol, annotation)
 
       override def transformStatement(stat: Statement)(owner: Symbol) = stat match
         case stat: ClassDef if isMultitierModule(stat.symbol) =>

@@ -37,11 +37,13 @@ object noReporting:
     val reset = try
       val contextClass = Class.forName("dotty.tools.dotc.core.Contexts$Context")
       val freshContextClass = Class.forName("dotty.tools.dotc.core.Contexts$FreshContext")
+      val typerStateClass = Class.forName("dotty.tools.dotc.core.TyperState")
       val reporterClass = Class.forName("dotty.tools.dotc.reporting.Reporter")
       val noReporterClass = Class.forName("dotty.tools.dotc.reporting.Reporter$NoReporter$")
 
-      val reporter = contextClass.getMethod("reporter")
-      val setReporter = freshContextClass.getMethod("setReporter", reporterClass)
+      val typerState = contextClass.getMethod("typerState")
+      val reporter = typerStateClass.getMethod("reporter")
+      val setReporter = typerStateClass.getMethod("setReporter", reporterClass)
 
       val noReporter = noReporterClass.getField("MODULE$").get(noReporterClass)
 
@@ -61,14 +63,18 @@ object noReporting:
             val contextStateClass = Class.forName("dotty.tools.dotc.core.Contexts$ContextState")
             val contextPoolClass = Class.forName("dotty.tools.dotc.core.Contexts$ContextPool")
             val exploreContextPool = contextStateClass.getMethod("exploreContextPool")
+            val exploringReporterClass = Class.forName("dotty.tools.dotc.reporting.ExploringReporter")
             val base = contextClass.getMethod("base")
             val next = contextPoolClass.getMethod("next", contextClass)
             val free = contextPoolClass.getMethod("free")
+            val reset = exploringReporterClass.getMethod("reset")
 
             val pool = exploreContextPool.invoke(base.invoke(context))
             val freshContext = next.invoke(pool, context)
             freshContext -> { (originalReporter: Any) =>
-              originalReporter.getClass.getMethod("reset").invoke(originalReporter)
+              val contextReporter = reporter.invoke(typerState.invoke(freshContext))
+              if exploringReporterClass.isInstance(contextReporter) then
+                reset.invoke(contextReporter)
               free.invoke(pool)
             }
         else
@@ -81,12 +87,14 @@ object noReporting:
         end if
       end val
 
-      val originalReporter = reporter.invoke(freshContext)
-      setReporter.invoke(freshContext, noReporter)
+      val contextTyperState = typerState.invoke(freshContext)
+      val originalReporter = reporter.invoke(contextTyperState)
+      setReporter.invoke(contextTyperState, noReporter)
 
       val finalize = { () =>
         try
-          setReporter.invoke(freshContext, originalReporter)
+          val contextTyperState = typerState.invoke(freshContext)
+          setReporter.invoke(contextTyperState, originalReporter)
           disposeFreshContext(originalReporter)
         catch
           case NonFatal(_) =>
