@@ -239,7 +239,7 @@ object reflectionExtensions:
 
     def resultType: quotes.reflect.TypeRepr =
       tpe match
-        case tpe: quotes.reflect.MethodOrPoly => tpe.resType.resultType
+        case tpe: quotes.reflect.LambdaType => tpe.resType.resultType
         case tpe: quotes.reflect.ByNameType => tpe.underlying.resultType
         case _ => tpe
 
