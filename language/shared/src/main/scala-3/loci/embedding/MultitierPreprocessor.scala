@@ -31,7 +31,7 @@ object MultitierPreprocessor:
   private inline val insertComileTimeOnlyForPlacedValues = false
 
   private val preprocessedCompilationUnits = mutable.WeakHashMap.empty[Any, Unit]
-  private val annotatedTrees = mutable.WeakHashMap.empty[Any, Unit]
+  private val preprocessorAnnotated = mutable.WeakHashMap.empty[Any, Unit]
   private val nonplacedMembers = mutable.WeakHashMap.empty[Any, Unit]
 
   val illegalPlacedValueAccessMessage =
@@ -75,23 +75,36 @@ object MultitierPreprocessor:
           case QuotesTree(tree) => maybeMultitierAnnotation(tree)
           case _ => false
 
-      def processAnnotations(tree: Any, currentUnit: Boolean): Unit =
+      def preprocessorAnnotation(using SpannedPosition) =
+        UntypedApply(
+          UntypedSelect(
+            UntypedNew(UntypedSelect(UntypedSelect(TypedSplice(Ref(multitierPreprocessor)), termName("moduleDefinition")), typeName("multitier"))),
+            termName("<init>")),
+          List(
+            UntypedApply(
+              UntypedSelect(
+                UntypedNew(UntypedSelect(UntypedSelect(TypedSplice(Ref(multitierPreprocessor)), termName("moduleAnnotation")), typeName("multitier"))),
+                termName("<init>")),
+              List.empty)))
+
+      def hasPreprocessorAnnotation(decl: Any) =
+        hasAnnotation(decl):
+          case QuotesTree(Apply(Select(New(TypeSelect(Select(qualifier, "moduleDefinition"), "multitier")), "<init>"), _)) =>
+            typedSpliceClass.isInstance(qualifier) && qualifier.symbol == multitierPreprocessor
+          case _ =>
+            false
+
+      def processAnnotations(tree: Any, containsExpandingTree: Boolean): Unit =
         val isModuleDef = moduleDefClass.isInstance(tree)
         val isClassDef = typeDefClass.isInstance(tree) && templateClass.isInstance(rhs.invoke(tree))
 
         if isModuleDef || isClassDef then
-          inline def processed = hasAnnotation(tree):
-            case QuotesTree(Apply(Select(New(TypeSelect(Select(qualifier, "moduleDefinition"), "multitier")), "<init>"), _)) =>
-              typedSpliceClass.isInstance(qualifier) && qualifier.symbol == multitierPreprocessor
-            case _ =>
-              false
-
-          if !(annotatedTrees contains tree) && !processed then
-            annotatedTrees += tree -> ()
+          if !(preprocessorAnnotated contains tree) && !hasPreprocessorAnnotation(tree) then
+            preprocessorAnnotated += tree -> ()
 
             val index = annotationIndex(tree):
               case QuotesTree(tree) =>
-                maybeMultitierAnnotation(tree) || currentUnit && contains.invoke(sourcePos.invoke(tree, context), Position.ofMacroExpansion) == true
+                maybeMultitierAnnotation(tree) || containsExpandingTree && contains.invoke(sourcePos.invoke(tree, context), Position.ofMacroExpansion) == true
               case _ =>
                 false
 
@@ -100,29 +113,17 @@ object MultitierPreprocessor:
                 case annotations: List[?] =>
                   annotations(index) match
                     case QuotesTree(Apply(fun, _)) =>
-                      val annotation =
-                        SpannedPosition(fun.pos.sourceFile, span.invoke(fun)):
-                          UntypedApply(
-                            UntypedSelect(
-                              UntypedNew(UntypedSelect(UntypedSelect(TypedSplice(Ref(multitierPreprocessor)), termName("moduleDefinition")), typeName("multitier"))),
-                              termName("<init>")),
-                            List(
-                              UntypedApply(
-                                UntypedSelect(
-                                  UntypedNew(UntypedSelect(UntypedSelect(TypedSplice(Ref(multitierPreprocessor)), termName("moduleAnnotation")), typeName("multitier"))),
-                                  termName("<init>")),
-                                List.empty)))
-
-                      lastSingletonSubList(annotations) match
-                        case last @ _ :: _ => setNext(last, List(annotation))
-                        case _ =>
+                      SpannedPosition(fun.pos.sourceFile, span.invoke(fun)):
+                        lastSingletonSubList(annotations) match
+                          case last @ _ :: _ => setNext(last, List(preprocessorAnnotation))
+                          case _ =>
                     case _ =>
                 case _ =>
         end if
 
         tree match
-          case iterable: Iterable[?] => iterable foreach { processAnnotations(_, currentUnit) }
-          case product: Product => product.productIterator foreach { processAnnotations(_, currentUnit) }
+          case iterable: Iterable[?] => iterable foreach { processAnnotations(_, containsExpandingTree) }
+          case product: Product => product.productIterator foreach { processAnnotations(_, containsExpandingTree) }
           case _ =>
       end processAnnotations
 
@@ -133,8 +134,32 @@ object MultitierPreprocessor:
           compilationUnits foreach: unit =>
             if !(preprocessedCompilationUnits contains unit) || unit == currentUnit then
               preprocessedCompilationUnits += unit -> ()
-              processAnnotations(untpdTree.invoke(unit), unit == currentUnit)
+              processAnnotations(untpdTree.invoke(unit), containsExpandingTree = unit == currentUnit)
         case _ =>
+
+      macroAnnotteeDeclarations foreach:
+        case QuotesSymbol(symbol) if !(preprocessorAnnotated contains symbol) =>
+          annotationsUnsafe.invoke(denot.invoke(symbol, context), context) match
+            case annotations: List[?] =>
+              if annotations exists { isEvaluating.invoke(_) == true } then
+                preprocessorAnnotated += symbol -> ()
+
+                val tree =
+                  SpannedPosition(Position.ofMacroExpansion):
+                    preprocessorAnnotation
+
+                def treeTyping(otherContext: Any) =
+                  typedAheadExpr.invoke(typer.invoke(context), tree, wildcardType.get(null), context)
+
+                val annotation =
+                  lazyAnnotation.invoke(null, `multitierPreprocessor.multitier`, treeTyping)
+
+                lastSingletonSubList(annotations) match
+                  case last @ _ :: _ => setNext(last, List(annotation))
+                  case _ =>
+            case _ =>
+        case _ =>
+
     catch
       case NonFatal(e) =>
 
@@ -196,7 +221,7 @@ object MultitierPreprocessor:
                   case tpe => tpe
               SymbolMutator.getOrErrorAndAbort.setInfo(symbol, info)
 
-          else if symbol.isClassDef && !hasAnnotationSymbol(symbol, `language.multitier`) && !hasAnnotationSymbol(symbol, `embedding.multitier`) then
+          else if symbol.isClassDef && !hasAnnotationSymbol(symbol, `language.multitier`) then
             // recurse into nested classes, traits and objects that are not multitier modules
             processDeclarations(symbol, nestedInMultitierAnnottee || multitierAnnottee)
         end if
@@ -224,7 +249,7 @@ object MultitierPreprocessor:
                 adaptMemberDefinitionBody(tree, hasPlacementType = false)
               case tpt =>
                 val memberAscription =
-                  SpannedPosition(SourceFile.current, span.invoke(Position.ofMacroExpansion)):
+                  SpannedPosition(Position.ofMacroExpansion):
                     UntypedApplied(
                       UntypedSelect(
                         UntypedSelect(
@@ -263,13 +288,13 @@ object MultitierPreprocessor:
           else
             val isModuleDef = moduleDefClass.isInstance(tree)
             val isClassDef = typeDefClass.isInstance(tree) && templateClass.isInstance(rhs.invoke(tree))
-            if (isModuleDef || isClassDef) && !hasAnnotationSymbol(tree, `language.multitier`) && !hasAnnotationSymbol(tree, `embedding.multitier`) then
+            if (isModuleDef || isClassDef) && !hasAnnotationSymbol(tree, `language.multitier`) then
               processDeclarations(tree, nestedInMultitierAnnottee || multitierAnnottee)
         end if
       end processTree
 
       def processDeclarations(decl: Any, nestedInMultitierAnnottee: Boolean): Unit =
-        val multitierAnnottee = hasAnnotationSymbol(decl, `language.multitier`) || hasAnnotationSymbol(decl, `embedding.multitier`)
+        val multitierAnnottee = hasAnnotationSymbol(decl, `language.multitier`)
 
         if multitierAnnottee && !nestedInMultitierAnnottee then
           decl match
@@ -450,7 +475,7 @@ object MultitierPreprocessor:
                 // adapt ascribed placement type of from `Nothing on P` to `Nothing of P on P` and
                 // adapt ascribed non-placement type of from `T` to `nonplaced type T` on parameterless values that are not multitier modules (if configured)
                 val isMultitierModule =
-                  SpannedPosition(SourceFile.current, span.invoke(untypedTpt)):
+                  SpannedPosition(Position.ofMacroExpansion.sourceFile, span.invoke(untypedTpt)):
                     (untypedTpt, typedTpt.tpe) match
                       case (_, AppliedType(_, List(valueType, _)))
                           if hasPlacementType && isNothing(valueType) && infixOpClass.isInstance(untypedTpt) =>
@@ -462,7 +487,7 @@ object MultitierPreprocessor:
                         false
                       case (tpt, tpe) =>
                         def isMultitierModule =
-                          hasAnnotationSymbol(tree, `language.multitier`) || hasAnnotationSymbol(tree, `embedding.multitier`) ||
+                          hasAnnotationSymbol(tree, `language.multitier`) ||
                           (tpe.baseClasses exists: symbol =>
                             symbol.hasAnnotation(`language.multitier`) || symbol.hasAnnotation(`embedding.multitier`)) ||
                           (rhsInstantiationTypeIfDeficientTpt.baseClasses exists: symbol =>
@@ -486,7 +511,7 @@ object MultitierPreprocessor:
                   else
                     span.invoke(tree)
 
-                SpannedPosition(SourceFile.current, positionSpan):
+                SpannedPosition(Position.ofMacroExpansion.sourceFile, positionSpan):
                   if isEmpty.invoke(rhs) == true then
                     // allow abstract values in objects
                     val isDeferred = hasAnnotationSymbol(tree, deferred)
@@ -579,7 +604,7 @@ object MultitierPreprocessor:
     val tpt = valOrDefTpt.invoke(tree)
     val rhs = unforcedRhs.invoke(tree)
 
-    SpannedPosition(SourceFile.current, span.invoke(tree)):
+    SpannedPosition(Position.ofMacroExpansion.sourceFile, span.invoke(tree)):
       def maybePlacementRelatedTerm(tree: Any) = tree match
         case QuotesTree(
             Ident("on") |
@@ -622,13 +647,13 @@ object MultitierPreprocessor:
             def propagate(tree: Any): Option[(AnyRef, Option[Any])] = underlying(tree) match
               case tree if infixOpClass.isInstance(tree) => (left.invoke(tree), op.invoke(tree), right.invoke(tree)) match
                 case (left, QuotesTree(op @ Ident("and")), right) =>
-                  SpannedPosition(SourceFile.current, span.invoke(op)) { adapt(left, right) }
+                  SpannedPosition(Position.ofMacroExpansion.sourceFile, span.invoke(op)) { adapt(left, right) }
                 case (QuotesTree(left @ TypeApply(fun, List(arg))), QuotesTree(op @ Ident("apply" | "local" | "sbj")), right) if maybePlacementRelatedTerm(fun) =>
                   Some(UntypedInfix(left, op, blockWithMarkerDef(right)), Some(arg))
                 case _ =>
                   None
               case QuotesTree(Apply(tree @ Select(left, "and"), List(right))) =>
-                SpannedPosition(SourceFile.current, nameSpan.invoke(tree, context)) { adapt(left, right) }
+                SpannedPosition(Position.ofMacroExpansion.sourceFile, nameSpan.invoke(tree, context)) { adapt(left, right) }
               case QuotesTree(Apply(term @ TypeApply(fun, List(arg)), List(expr))) if maybePlacementRelatedTerm(fun) =>
                 Some(UntypedApply(term, List(blockWithMarkerDef(expr))), Some(arg))
               case _ =>
@@ -771,6 +796,7 @@ object MultitierPreprocessor:
       scala.runtime.Statics.releaseFence()
 
     val quotesImplClass = Class.forName("scala.quoted.runtime.impl.QuotesImpl")
+    val contextsClass = Class.forName("dotty.tools.dotc.core.Contexts")
     val contextClass = Class.forName("dotty.tools.dotc.core.Contexts$Context")
     val scopeClass = Class.forName("dotty.tools.dotc.core.Scopes$Scope")
     val compilationUnitClass = Class.forName("dotty.tools.dotc.CompilationUnit")
@@ -823,7 +849,7 @@ object MultitierPreprocessor:
     val scope = contextClass.getMethod("scope")
     val owner = contextClass.getMethod("owner")
     val compilationUnit = contextClass.getMethod("compilationUnit")
-    val outersIterator = contextClass.getMethod("outersIterator")
+    val outer = contextClass.getMethod("outer")
     val iterator = scopeClass.getMethod("iterator", contextClass)
     val untpdTree = compilationUnitClass.getMethod("untpdTree")
     val units = runClass.getMethod("units")
@@ -833,12 +859,15 @@ object MultitierPreprocessor:
     val annotationsUnsafe = symDenotationClass.getMethod("annotationsUNSAFE", contextClass)
     val flagsUnsafe = symDenotationClass.getMethod("flagsUNSAFE")
     val resetFlag = symDenotationClass.getMethod("resetFlag", classOf[Long])
+    val lazyAnnotation = annotationClass.getMethod("deferred", symbolClass, classOf[? => ?])
     val isEvaluated = annotationClass.getMethod("isEvaluated")
+    val isEvaluating = annotationClass.getMethod("isEvaluating")
     val annotationSymbol = annotationClass.getMethod("symbol", contextClass)
     val annotationTree = annotationClass.getMethod("tree", contextClass)
     val wildcardType = wildcardTypeClass.getDeclaredField("MODULE$")
     val typedExpr = typerClass.getMethod("typedExpr", treeClass, typeClass, contextClass)
     val typedType = typerClass.getMethod("typedType", treeClass, typeClass, classOf[Boolean], contextClass)
+    val typedAheadExpr = typerClass.getMethod("typedAheadExpr", treeClass, typeClass, contextClass)
     val original = completerClass.getMethod("original")
     val contains = sourcePositionClass.getMethod("contains", sourcePositionClass)
     val sourcePos = srcPosClass.getMethod("sourcePos", contextClass)
@@ -895,6 +924,7 @@ object MultitierPreprocessor:
     val modAnnotations = modifiersClass.getMethod("annotations")
     val modWithAddedAnnotation = modifiersClass.getMethod("withAddedAnnotation", treeClass)
 
+    val noContext = contextsClass.getMethod("NoContext").invoke(null)
     val applyKindUsing = applyKindClass.getMethod("valueOf", classOf[String]).invoke(null, "Using")
     val emptyTree = untpdClass.getMethod("EmptyTree").invoke(null)
 
@@ -911,6 +941,8 @@ object MultitierPreprocessor:
     object SpannedPosition:
       def apply[T](sourceFile: Any, span: Any)(body: SpannedPosition ?=> T): T =
         body(using SpannedPosition(sourceFile, span))
+      def apply[T](using Quotes)(pos: quotes.reflect.Position)(body: SpannedPosition ?=> T): T =
+        body(using SpannedPosition(pos.sourceFile, span.invoke(pos)))
 
     inline def UntypedApply(fun: Any, args: Any)(using pos: SpannedPosition) =
       withSpan.invoke(apply.invoke(null, fun, args, pos.sourceFile), pos.span)
@@ -974,26 +1006,44 @@ object MultitierPreprocessor:
       else
         symbol
 
+    private def constructScopeIterator(using Quotes)(
+        context: Any,
+        scopeOwner: Option[(quotes.reflect.Symbol, Boolean)],
+        foundScopeOwner: Boolean): Iterator[quotes.reflect.Symbol] =
+      val (found, include, terminate) = scopeOwner.fold(false, true, false): (symbol, nested) =>
+        val found = owner.invoke(context) == symbol
+        (found, found || nested, foundScopeOwner && !found)
+
+      if !terminate && context != noContext then
+        val symbols =
+          if include then
+            iterator.invoke(scope.invoke(context), context) match
+              case symbols: Iterator[?] =>
+                symbols flatMap:
+                  case QuotesSymbol(symbol) => Some(symbol)
+                  case _ => None
+              case _ =>
+                Iterator.empty
+          else
+            Iterator.empty
+
+        constructScopeIterator(outer.invoke(context), scopeOwner, found) ++ symbols
+      else
+        Iterator.empty
+    end constructScopeIterator
+
+    def scopeIterator(using Quotes) =
+      constructScopeIterator(ctx.invoke(quotes), None, false)
+
     def scopeIterator(using Quotes)(symbol: quotes.reflect.Symbol) =
-      outersIterator.invoke(ctx.invoke(quotes)) match
-        case outers: Iterator[?] =>
-          outers flatMap: context =>
-            if owner.invoke(context) == symbol then
-              iterator.invoke(scope.invoke(context), context) match
-                case symbols: Iterator[?] =>
-                  symbols flatMap:
-                    case QuotesSymbol(symbol) => Some(symbol)
-                    case _ => None
-                case _ =>
-                  Iterator.empty
-            else
-              Iterator.empty
-        case _ =>
-          Iterator.empty
+      constructScopeIterator(ctx.invoke(quotes), Some(symbol, false), false)
+
+    def nestedScopeIterator(using Quotes)(symbol: quotes.reflect.Symbol) =
+      constructScopeIterator(ctx.invoke(quotes), Some(symbol, true), false)
 
     def tryTypingTerm(using Quotes)(term: quotes.reflect.Term) =
       if hasType.invoke(term) == false then
-        noReporting(ctx.invoke(quotes))(null, useExploringContext = false): context =>
+        noReporting(ctx.invoke(quotes))(None, useExploringContext = false): context =>
           typedExpr.invoke(typer.invoke(context), term, wildcardType.get(null), context) match
             case QuotesTree(term: quotes.reflect.Term) => Some(term)
             case _ => None
@@ -1002,7 +1052,7 @@ object MultitierPreprocessor:
 
     def tryTypingTypeTree(using Quotes)(tpt: quotes.reflect.TypeTree) =
       if hasType.invoke(tpt) == false then
-        noReporting(ctx.invoke(quotes))(null, useExploringContext = false): context =>
+        noReporting(ctx.invoke(quotes))(None, useExploringContext = false): context =>
           typedType.invoke(typer.invoke(context), tpt, wildcardType.get(null), false, context) match
             case QuotesTree(tpt: quotes.reflect.TypeTree) => Some(tpt)
             case _ => None
@@ -1182,7 +1232,7 @@ object MultitierPreprocessor:
 
       def macroAnnotteeNamePosition(tree: Any): Option[quotes.reflect.Position] =
         if namedDefTreeClass.isInstance(tree) &&
-           (position(tree) exists { _.sourceFile == SourceFile.current }) &&
+           (position(tree) exists { pos => pos.sourceFile == SourceFile.current || pos.sourceFile == Position.ofMacroExpansion.sourceFile }) &&
            (annotationIterator(tree) exists { tree => contains.invoke(sourcePos.invoke(tree, context), Position.ofMacroExpansion) == true }) then
           namePos.invoke(tree, context)  match
             case pos: Position @unchecked if sourcePositionClass.isInstance(pos) => Some(pos)
@@ -1201,20 +1251,28 @@ object MultitierPreprocessor:
 
       val context = ctx.invoke(quotes)
       val owner = scopeOwner(Symbol.spliceOwner)
-      val annoteePos = macroAnnotteeNamePosition
+      val annotteePos = macroAnnotteeNamePosition
 
-      val decls = declarations(owner).iterator ++ scopeIterator(owner) filter: decl =>
+      val decls = declarations(owner).iterator ++ nestedScopeIterator(owner) filter: decl =>
         inline def declPos =
           if namedDefTreeClass.isInstance(decl) then
             Some(namePos.invoke(decl, context))
           else
             position(decl) flatMap: pos =>
-              Option.when(pos.sourceFile == SourceFile.current && pos.toString != "?"):
+              Option.when((pos.sourceFile == SourceFile.current || pos.sourceFile == Position.ofMacroExpansion.sourceFile) && pos.toString != "?"):
                 Position(pos.sourceFile, pos.start, pos.start)
 
-        (position(decl) exists { _.sourceFile == SourceFile.current }) &&
-        ((annotationIterator(decl) exists { tree => contains.invoke(sourcePos.invoke(tree, context), Position.ofMacroExpansion) == true }) ||
-         (annoteePos exists { pos => declPos exists { contains.invoke(pos, _) == true } }))
+        val evaluating =
+          decl match
+            case QuotesSymbol(symbol) => annotationsUnsafe.invoke(denot.invoke(symbol, context), context) match
+              case annotations: List[?] => annotations exists { isEvaluating.invoke(_) == true }
+              case _ => false
+            case _ => false
+
+        (position(decl) exists { pos => pos.sourceFile == SourceFile.current || pos.sourceFile == Position.ofMacroExpansion.sourceFile }) &&
+        (evaluating ||
+         (annotationIterator(decl) exists { tree => contains.invoke(sourcePos.invoke(tree, context), Position.ofMacroExpansion) == true }) ||
+         (annotteePos exists { pos => declPos exists { contains.invoke(pos, _) == true } }))
       end decls
 
       decls.distinct.toList

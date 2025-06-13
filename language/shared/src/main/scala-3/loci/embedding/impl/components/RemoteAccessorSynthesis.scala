@@ -615,7 +615,7 @@ trait RemoteAccessorSynthesis:
 
   def synthesizeAccessors(symbol: Symbol): Accessors =
     val module = if symbol.moduleClass.exists then symbol.moduleClass else symbol
-    val originalTree = if module.pos exists { _.sourceFile == SourceFile.current } then symbolOriginalTree(module) else None
+    val originalTree = if module.pos exists { pos => pos.sourceFile == SourceFile.current || pos.sourceFile == Position.ofMacroExpansion.sourceFile } then symbolOriginalTree(module) else None
     val tier = if originalTree.isDefined then 1 else 0
 
     synthesizedAccessorsCache.getOrElseUpdate(module, tier):
