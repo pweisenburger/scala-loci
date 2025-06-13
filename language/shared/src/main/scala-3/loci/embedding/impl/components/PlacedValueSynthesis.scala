@@ -30,7 +30,9 @@ trait PlacedValueSynthesis:
     case cache: Cache.Layered.Tiered[Symbol, Symbol | Unit, SynthesizedPlacedValues] @unchecked => cache
 
   private def mangledSymbolName(symbol: Symbol) =
-    f"loci$$${s"${implementationForm(symbol)} ${fullName(symbol)}".hashCode}%08x"
+    val locallyScoped = symbol hasAncestor { symbol => symbol.isMethod || symbol.isField }
+    val offset = if locallyScoped then symbol.pos.fold("") { pos => s" [offset ${pos.start}]" } else ""
+    f"loci$$${s"${implementationForm(symbol)} ${fullName(symbol)}$offset".hashCode}%08x"
 
   private def implementationForm(symbol: Symbol) =
     if symbol.flags is Flags.Module then "object"

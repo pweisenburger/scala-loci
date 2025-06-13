@@ -171,7 +171,7 @@ sealed trait PlacedCleanSynthesis extends PlacedCleanAmbiguousResolutionBarrier:
 
     object processor extends TypeMap(quotes):
       override def transform(tpe: TypeRepr) = tpe match
-        case _ if tpe.typeSymbol.flags is Flags.Opaque => tpe
+        case _ if (tpe.typeSymbol.flags is Flags.Opaque) || tpe =:= TypeRepr.of[Nothing] || tpe =:= TypeRepr.of[Null] => tpe
         case Refinement(parent, name, _) if name == "on" && parent <:< TypeRepr.of[Nothing] => transform(parent)
         case AppliedType(tycon, List(arg)) if tycon.typeSymbol == of => transform(arg)
         case AppliedType(tycon, List(arg)) if tycon.typeSymbol == local => transform(arg)
@@ -179,14 +179,13 @@ sealed trait PlacedCleanSynthesis extends PlacedCleanAmbiguousResolutionBarrier:
           case '[ t `per` r ] => unit
           case _ => transform(t)
         case _ => tpe.asType match
-          case '[ Nothing ] | '[ Null ] => tpe
-          case '[ language.on[t `per` r, p] ] => unit
-          case '[ embedding.on[t `per` r, p] ] => unit
-          case '[ language.on[t, p] ] => transform(TypeRepr.of[t].cleanRecursiveDisjunction(tpe))
-          case '[ embedding.on[t, p] ] => transform(TypeRepr.of[t].cleanRecursiveDisjunction(tpe))
-          case '[ t `fromMultiple` p ] => unit
-          case '[ t `fromSingle` p ] => unit
-          case '[ t `from` p ] => unit
+          case '[ language.on[t `per` r, p] ] if tpe =:= TypeRepr.of[language.on[t `per` r, p]] => unit
+          case '[ embedding.on[t `per` r, p] ] if tpe =:= TypeRepr.of[embedding.on[t `per` r, p]] => unit
+          case '[ language.on[t, p] ] if tpe =:= TypeRepr.of[language.on[t, p]] => transform(TypeRepr.of[t].cleanRecursiveDisjunction(tpe))
+          case '[ embedding.on[t, p] ] if tpe =:= TypeRepr.of[embedding.on[t, p]] => transform(TypeRepr.of[t].cleanRecursiveDisjunction(tpe))
+          case '[ t `fromMultiple` p ] if tpe =:= TypeRepr.of[t `fromMultiple` p] => unit
+          case '[ t `fromSingle` p ] if tpe =:= TypeRepr.of[t `fromSingle` p] => unit
+          case '[ t `from` p ] if tpe =:= TypeRepr.of[t `from` p] => unit
           case _ => super.transform(tpe)
 
     processor.transform(TypeRepr.of[T]).asType

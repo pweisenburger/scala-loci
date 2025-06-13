@@ -82,10 +82,11 @@ object reflectionExtensions:
       import quotes.reflect.*
 
       if symbol.isField && (symbol.flags is Flags.Mutable) then
-        val setter = symbol.owner.declaredMethod(s"${symbol.name}_=") find:
+        val setter = symbol.owner.declaredMethod(s"${symbol.name}_=") find {
           _.info match
             case MethodType(_, List(paramType), resultType) => paramType =:= symbol.info && resultType.typeSymbol == defn.UnitClass
             case _ => false
+        }
         setter getOrElse Symbol.noSymbol
       else
         Symbol.noSymbol
@@ -704,8 +705,9 @@ object reflectionExtensions:
       if elements.nonEmpty && elements.sizeIs < 23 then
         defn.TupleClass(elements.size).typeRef.appliedTo(elements)
       else
-        elements.foldRight[TypeRepr](nil.typeRef): (tpe, tuple) =>
+        elements.foldRight[TypeRepr](nil.typeRef) { (tpe, tuple) =>
           cons.typeRef.appliedTo(List(tpe, tuple))
+        }
 
     @targetName("applyTerm")
     def apply(elements: List[Term]): Term =

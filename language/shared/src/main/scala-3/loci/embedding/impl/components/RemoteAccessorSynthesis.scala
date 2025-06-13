@@ -233,7 +233,7 @@ trait RemoteAccessorSynthesis:
 
   sealed class MutableCachedTypeSeqMap[T] extends CachedTypeSeqMap[T]:
     def addNewTypeEntry(tpe: TypeRepr, value: T): T =
-      assert(lookupType(tpe).isEmpty)
+      require(lookupType(tpe).isEmpty)
       map += tpe -> value
       list += value
       value
@@ -263,7 +263,9 @@ trait RemoteAccessorSynthesis:
         (tokens, serialized)
 
   private def mangledSymbolName(symbol: Symbol) =
-    f"${s"${implementationForm(symbol)} ${fullName(symbol)}".hashCode}%08x"
+    val locallyScoped = symbol hasAncestor { symbol => symbol.isMethod || symbol.isField }
+    val offset = if locallyScoped then symbol.pos.fold("") { pos => s" [offset ${pos.start}]" } else ""
+    f"${s"${implementationForm(symbol)} ${fullName(symbol)}$offset".hashCode}%08x"
 
   private def implementationForm(symbol: Symbol) =
     if symbol.flags is Flags.Module then "object"
@@ -459,8 +461,8 @@ trait RemoteAccessorSynthesis:
 
     private object resolutionFailureCollector extends TreeAccumulator[Option[(String, Boolean)]]:
       def foldTree(failure: Option[(String, Boolean)], tree: Tree)(owner: Symbol) = tree match
-        case Block(List(defintion @ DefDef(names.resolutionFailure, _, _, _), Apply(call, List())), expr) if defintion.symbol == call.symbol =>
-          compileTimeOnly(defintion.symbol).fold(foldOverTree(failure, tree)(owner)): message =>
+        case Block(List(definition @ DefDef(names.resolutionFailure, _, _, _), Apply(call, List())), expr) if definition.symbol == call.symbol =>
+          compileTimeOnly(definition.symbol).fold(foldOverTree(failure, tree)(owner)): message =>
             val typeSymbol = TransmittableTypes(expr.tpe).base.typeSymbol
             val typeParam = typeSymbol.isTypeParam || (typeParamMasker masked typeSymbol)
             failure match
@@ -485,23 +487,23 @@ trait RemoteAccessorSynthesis:
           case result: context.reflect.ImplicitSearchSuccess => Some(requoteTerm(context, quotes)(result.tree))
           case _ => None
 
-    def resolve(tpe: TypeRepr, message: String, context: Option[Quotes] = None) =
-      val contextQuotes = context getOrElse quotes
-      val contextCache = cache.getOrElseUpdate(contextQuotes)(MutableCachedTypeSeqMap())
+    def resolve(tpe: TypeRepr, message: String, context: Option[Quotes]) =
+      val contextCache = context.fold(MutableCachedTypeSeqMap()):
+        cache.getOrElseUpdate(_)(MutableCachedTypeSeqMap())
       contextCache.lookupType(tpe) getOrElse:
         val result =
-          noMacroCheck(searchImplicitsContextually(typeParamMasker.mask(tpe), contextQuotes)).fold(Result.Failure(message)): term =>
+          noMacroCheck(searchImplicitsContextually(typeParamMasker.mask(tpe), context getOrElse quotes)).fold(Result.Failure(message)): term =>
             Result(typeParamMasker.unmask(term))
         contextCache.addNewTypeEntry(tpe, result)
         result
 
-    def resolveSerializable(tpe: TypeRepr, context: Option[Quotes] = None) =
+    def resolveSerializable(tpe: TypeRepr, context: Option[Quotes]) =
       resolve(
         symbols.serializable.typeRef.appliedTo(tpe),
         s"${prettyType(tpe.prettyShow)} is not serializable.",
         context).asTerm
 
-    def resolveTransmittable(tpe: TypeRepr, allowFailureForTypeParameters: Boolean, context: Option[Quotes] = None) =
+    def resolveTransmittable(tpe: TypeRepr, allowFailureForTypeParameters: Boolean, context: Option[Quotes]) =
       resolve(
         symbols.transmittable.typeRef.appliedTo(List(tpe, TypeBounds.empty, TypeBounds.empty, TypeBounds.empty, TypeBounds.empty)),
         s"${prettyType(tpe.prettyShow)} is not transmittable.",
@@ -973,17 +975,6 @@ trait RemoteAccessorSynthesis:
                   case _ => inheritedMarshallables.addNewTypeEntry(marshallable.types.base, mutable.SortedSet(marshallable))
     end if
 
-    val serializableTypeMap = MutableCachedTypeSeqMap[Term]
-
-    def resolveSerializable(tpe: TypeRepr) =
-      serializableTypeMap.lookupType(tpe) match
-        case Some(term) =>
-          Right(term)
-        case _ =>
-          val serializable = Resolution.resolveSerializable(tpe, MultitierPreprocessor.annotationTypingContext(module))
-          serializable foreach { serializableTypeMap.addNewTypeEntry(tpe, _) }
-          serializable
-
     def marshallableConstruction(transmittable: Transmittable) =
       if transmittable.signature != abstractSignature then
         def contextBuilders(tpe: TypeRepr): Either[String, Term] =
@@ -1007,7 +998,7 @@ trait RemoteAccessorSynthesis:
             val transmittable = types.transmittables.baseType(symbols.message).typeArgs.head
             val transmittableTypes = TransmittableTypes(transmittable)
             contextBuilder(transmittableTypes) flatMap: builder =>
-              resolveSerializable(transmittableTypes.intermediate) map: serializer =>
+              Resolution.resolveSerializable(transmittableTypes.intermediate, MultitierPreprocessor.annotationTypingContext(module)) map: serializer =>
                 Ref(symbols.messagingContext).appliedToTypes(transmittableTypes.typeList).appliedTo(builder, serializer)
           else if types.transmittables derivesFrom symbols.none then
             Right(Ref(symbols.noneContext))
@@ -1015,7 +1006,7 @@ trait RemoteAccessorSynthesis:
             Left(s"${prettyType(types.base.prettyShow)} is not transmittable")
 
         contextBuilder(transmittable.types) flatMap: builder =>
-          resolveSerializable(transmittable.types.intermediate) map: serializer =>
+          Resolution.resolveSerializable(transmittable.types.intermediate, MultitierPreprocessor.annotationTypingContext(module)) map: serializer =>
             Some:
               Ref(symbols.marshallableResolution)
                 .appliedToTypes(transmittable.types.typeList)
@@ -1386,8 +1377,11 @@ trait RemoteAccessorSynthesis:
 
             marshallables match
               case Left(message) =>
-                val (prolog, pos) = position()
-                errorAndCancel(s"$prolog because $message", pos)
+                if valueAccessed || accessorGeneration != Preferred then
+                  val (prolog, pos) = position()
+                  errorAndCancel(s"$prolog because $message", pos)
+                else
+                  info("  Skipping synthesis for non-accessed placed value")
                 None
               case Right(marshallables) =>
                 Some((original, signature, tpe, position, valueAccessed, valuePrivate) ++ marshallables)
