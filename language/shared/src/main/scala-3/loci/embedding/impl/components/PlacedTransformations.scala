@@ -137,28 +137,27 @@ trait PlacedTransformations:
       false
 
   class PlacementFromPlacedValueTypeEraser extends TypeMap(quotes):
-    override def transform(tpe: TypeRepr) =
-      val corrected = tpe match
-        case AndType(AppliedType(tycon, args), right) if tycon.typeSymbol == symbols.placed && args.last =:= right =>
-          symbols.`embedding.on`.typeRef.appliedTo(args.reverse)
-        case _ =>
-          tpe
-
-      if selectionType(corrected) then
-        TypeRepr.of[Unit]
-      else
-        PlacementInfo(corrected) match
-          case Some(placementInfo) =>
-            if placementInfo.modality.subjective then
-              TypeRepr.of[Unit]
-            else
-              transform(placementInfo.valueType)
-          case _ =>
-            NonPlacementInfo(corrected) match
-              case Some(nonPlacementInfo) =>
-                transform(nonPlacementInfo.valueType)
-              case _ =>
-                super.transform(corrected)
+    override def transform(tpe: TypeRepr) = tpe match
+      case AndType(AppliedType(tycon, args), right) if tycon.typeSymbol == symbols.placed && args.last =:= right =>
+        transform(symbols.`embedding.on`.typeRef.appliedTo(args.reverse))
+      case AppliedType(tycon, List(tpe, _)) if tycon.typeSymbol == symbols.`embedding.of` =>
+        transform(tpe)
+      case _ =>
+        if selectionType(tpe) then
+          TypeRepr.of[Unit]
+        else
+          PlacementInfo(tpe) match
+            case Some(placementInfo) =>
+              if placementInfo.modality.subjective then
+                TypeRepr.of[Unit]
+              else
+                transform(placementInfo.valueType)
+            case _ =>
+              NonPlacementInfo(tpe) match
+                case Some(nonPlacementInfo) =>
+                  transform(nonPlacementInfo.valueType)
+                case _ =>
+                  super.transform(tpe)
     end transform
   end PlacementFromPlacedValueTypeEraser
 end PlacedTransformations

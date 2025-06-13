@@ -50,6 +50,7 @@ trait Commons:
     val `type` = TypeRepr.of[transmitter.Transmittable.Resolution[?, ?, ?, ?, ?]].typeSymbol.typeMember("Type")
     val `language.multitier` = TypeRepr.of[language.multitier].typeSymbol
     val `embedding.multitier` = TypeRepr.of[embedding.multitier].typeSymbol
+    val multitierPreprocessor = TypeRepr.of[embedding.MultitierPreprocessor.type].typeSymbol
     val on = TypeRepr.of[embedding.On[?]].typeSymbol
     val select = TypeRepr.of[embedding.Select[?]].typeSymbol
     val run = TypeRepr.of[embedding.Run[?, ?]].typeSymbol
@@ -491,8 +492,11 @@ trait Commons:
     tpe
 
   def multitierModuleArgument(symbol: Symbol): Option[Term] =
-    (symbol.getAnnotation(symbols.`language.multitier`) collect { case Apply(Apply(_, List(arg)), List(_)) => arg }) orElse
-    (symbol.getAnnotation(symbols.`embedding.multitier`) collect { case Apply(_, List(arg)) => arg })
+    symbol.annotations collectFirst:
+      case annotation @ Apply(Apply(_, List(NamedArg(_, arg))), List(_)) if annotation.symbol hasAncestor symbols.`language.multitier` => arg
+      case annotation @ Apply(Apply(_, List(arg)), List(_)) if annotation.symbol hasAncestor symbols.`language.multitier` => arg
+      case annotation @ Apply(_, List(NamedArg(_, arg))) if annotation.symbol hasAncestor symbols.`embedding.multitier` => arg
+      case annotation @ Apply(_, List(arg)) if annotation.symbol hasAncestor symbols.`embedding.multitier` => arg
 
   def isMultitierModule(symbol: Symbol): Boolean =
     symbol.exists && (symbol.isField || symbol.isModuleDef || symbol.isClassDef) && !symbol.isPackageDef &&

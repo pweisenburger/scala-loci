@@ -123,7 +123,7 @@ trait Checking:
               errorAndCancel("Type is not a multitier module.", tpt.posInUserCode)
 
             rhs match
-              case _ if tree.symbol.hasAnnotation(symbols.deferred) =>
+              case _ if (tree.symbol.flags is Flags.Deferred) || tree.symbol.hasAnnotation(symbols.deferred) =>
               case None =>
               case Some(rhs @ NestedApplies(Select(New(_), _))) if rhs.tpe.typeSymbol.flags is Flags.Final =>
                 if !isMultitierModule(tree.symbol.owner) then
@@ -260,11 +260,11 @@ trait Checking:
           errorAndCancel("Abstract value cannot have `private` modifier.", stat.posInUserCode.firstCodeLine)
 
         rhs foreach:
-          case uninitialized @ (Ident(_) | Select(_, _))
+          case MaybeTyped(uninitialized @ (Ident(_) | Select(_, _)))
             if uninitialized.symbol == symbols.uninitialized =>
-          case Block(List(uninitialized @ (Ident(_) | Select(_, _))), erased: TypeApply)
+          case Block(List(MaybeTyped(uninitialized @ (Ident(_) | Select(_, _)))), erased: TypeApply)
             if uninitialized.symbol == symbols.uninitialized && (erased.symbol == symbols.erased || erased.symbol == symbols.erasedArgs) =>
-          case rhs =>
+          case _ =>
             errorAndCancel(
               s"Definitions with ${prettyAnnotation("@deferred")} annotation in final classes or objects must be initialized with `scala.compiletime.uninitialized`.",
               stat.posInUserCode.firstCodeLine)

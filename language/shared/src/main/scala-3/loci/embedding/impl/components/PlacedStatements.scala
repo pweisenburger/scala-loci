@@ -52,9 +52,11 @@ trait PlacedStatements:
 
   private object PlacedExpression:
     def unapply(term: Term): Some[(List[Definition], Term)] = Term.safeTryBetaReduce(term) match
-      case PlacementErasedArtifact(PlacementCallArtifact(bindings, expr)) => Term.safeTryBetaReduce(expr) match
+      case Inlined(Some(call), List(), MaybeInlined(body)) if call.symbol.hasAncestor(symbols.multitierPreprocessor) => body match
+        case PlacedExpression(nestedBindings, expr) => Some(nestedBindings, expr)
+      case MaybeTyped(PlacementErasedArtifact(PlacementCallArtifact(bindings, expr))) => Term.safeTryBetaReduce(expr) match
         case PlacedExpression(nestedBindings, expr) => Some((bindings ++ nestedBindings) -> expr)
-      case PlacementCallArtifact(bindings, expr) => Term.safeTryBetaReduce(expr) match
+      case MaybeTyped(PlacementCallArtifact(bindings, expr)) => Term.safeTryBetaReduce(expr) match
         case PlacedExpression(nestedBindings, expr) => Some((bindings ++ nestedBindings) -> expr)
       case term @ Apply(select @ Select(PlacedExpression(bindings, expr), names.apply), List(arg)) =>
         Term.safeBetaReduce(expr.select(select.symbol).appliedTo(arg)) match

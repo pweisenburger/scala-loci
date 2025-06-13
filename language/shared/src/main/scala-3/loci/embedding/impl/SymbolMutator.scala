@@ -56,7 +56,9 @@ class SymbolMutator private ():
       symbolName.set(denotation, typeName.invoke(null, name))
 
   def setInfo(using Quotes)(symbol: quotes.reflect.Symbol, info: quotes.reflect.TypeRepr): Unit =
-    infoSet.invoke(denot.invoke(symbol, ctx.invoke(quotes)), info)
+    val denotation = denot.invoke(symbol, ctx.invoke(quotes))
+    if symDenotationClass.isInstance(denotation) then
+      infoSet.invoke(denotation, info)
 
   def enter(using Quotes)(owner: quotes.reflect.Symbol, symbol: quotes.reflect.Symbol): Unit =
     val context = ctx.invoke(quotes)

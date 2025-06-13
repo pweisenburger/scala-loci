@@ -82,6 +82,10 @@ def inferrableCanonicalPlacementTypeContextClosure[R: Type](using Quotes)(v: Exp
   def namedOwner(symbol: Symbol) =
     symbol findAncestor { !_.isAnonymousFunction } getOrElse symbol
 
+  def underlying(tpe: TypeRepr) = tpe match
+    case AppliedType(tycon, List(arg)) if tycon.typeSymbol hasAncestor symbols.multitierPreprocessor => arg
+    case _ => tpe
+
   def clean(tpe: TypeRepr, ensureLocalType: Boolean) =
     val placementType = tpe match
       case AppliedType(tycon, List(t, p)) if tycon.typeSymbol == symbols.`embedding.on` => Some(t, p)
@@ -100,7 +104,8 @@ def inferrableCanonicalPlacementTypeContextClosure[R: Type](using Quotes)(v: Exp
               tpe
 
   def canonical(tpe: TypeRepr, placedMarkerOnly: Boolean) =
-    PlacementInfo(tpe).fold(tpe): placementInfo =>
+    val underlyingType = underlying(tpe)
+    PlacementInfo(underlyingType).fold(underlyingType): placementInfo =>
       val args @ List(value, peer) = placementInfo.canonicalType.typeArgs: @unchecked
       val canonicalValue = if value <:< TypeRepr.of[Nothing] then symbols.`embedding.of`.typeRef.appliedTo(args) else value
       val canonicalPeer = peer match
@@ -161,7 +166,7 @@ def inferrableCanonicalPlacementTypeContextClosure[R: Type](using Quotes)(v: Exp
       (Block(closures map { clearContextVariables(_)(Symbol.spliceOwner) }, Ref(symbols.erased).appliedToType(tpe)), None)
   end val
 
-  val r = result.tpe
+  val r = underlying(result.tpe)
 
   // To make the context function type inferrable, we hack the current context and change its mode to `Pattern`
   // as this mode lets the context function type propagate without resolving the context argument:
@@ -266,25 +271,8 @@ def inferrableCanonicalPlacementTypeContextClosure[R: Type](using Quotes)(v: Exp
 
                 case _ =>
             end if
-//          else
-//            // If the surrounding val or def has an explicit type annotation,
-//            // the `MultitierPreprocessor` can inject a `placed` expression
-//            // to improve type inference within the body
-//            // (in particular discarding non-Unit values, i.e., insertion of Unit values).
-//            // If the surrounding val or def is not placed,
-//            // it will not have an `on` placement type and the peer type will be inferred as `Any`.
-//            // In such case, we just expand to the unprocessed expression passed to the expanding function
-//            // without any added context argument.
-//            terms match
-//              case List(SyntheticContextParameter(evidence, body))
-//                if !(evidence.tpt.tpe =:= TypeRepr.of[Nothing]) &&
-//                   evidence.tpt.tpe <:< types.context &&
-//                   peer.typeSymbol == defn.AnyClass &&
-//                   symbol.info.resultType.typeSymbol != symbols.`language.on` &&
-//                   symbol.info.resultType.typeSymbol != symbols.`embedding.on` =>
-//                body.asExpr match
-//                  case result: Expr[R] @unchecked => return result
-//              case _ =>
+          else
+            SymbolMutator.getOrErrorAndAbort.setInfo(symbol, symbol.info.withResultType(underlying(symbol.info.resultType)))
       case _ =>
   catch
     case NonFatal(e) if e.getClass.getCanonicalName != "scala.quoted.runtime.StopMacroExpansion" =>

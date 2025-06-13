@@ -170,13 +170,17 @@ trait PlacedValueSplitting:
 
     val body = module.body flatMap:
       case stat @ ValDef(name, tpt, rhs) if !stat.symbol.isModuleDef =>
-        if isMultitierModule(stat.symbol) && !stat.symbol.hasAnnotation(symbols.deferred) then
+        if stat.symbol.flags is Flags.Deferred then
+          Some(ValDef.copy(stat)(name, tpt, None))
+        else if isMultitierModule(stat.symbol) && !stat.symbol.hasAnnotation(symbols.deferred) then
           Some(stat)
         else
           Some(ValDef.copy(stat)(name, tpt, rhs map { eraseBody(stat, _) }))
       case stat @ DefDef(name, paramss, tpt, rhs) =>
         if stat.symbol.isFieldAccessor then
-          if stat.symbol.getter.hasAnnotation(symbols.deferred) then
+          if stat.symbol.flags is Flags.Deferred then
+            Some(DefDef.copy(stat)(name, paramss, tpt, None))
+          else if stat.symbol.getter.hasAnnotation(symbols.deferred) then
             Some(DefDef.copy(stat)(name, paramss, tpt, rhs map { _ => Literal(UnitConstant()) }))
           else
             Some(stat)
