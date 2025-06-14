@@ -1,6 +1,7 @@
 package loci
 package embedding
 
+import impl.Cache
 import impl.SymbolMutator
 import utility.noReporting
 import utility.reflectionExtensions.*
@@ -33,6 +34,11 @@ object MultitierPreprocessor:
   private val preprocessedCompilationUnits = mutable.WeakHashMap.empty[Any, Unit]
   private val preprocessorAnnotated = mutable.WeakHashMap.empty[Any, Unit]
   private val nonplacedMembers = mutable.WeakHashMap.empty[Any, Unit]
+
+  private val annotationTypingContext = Cache[Any, Quotes]
+
+  def annotationTypingContext(using Quotes)(symbol: quotes.reflect.Symbol): Option[Quotes] =
+    annotationTypingContext.get(symbol)
 
   val illegalPlacedValueAccessMessage =
     "Access to abstraction only allowed on peers on which the abstraction is placed. Remote access must be explicit."
@@ -365,7 +371,14 @@ object MultitierPreprocessor:
           case QuotesSymbol(symbol) => dropMultitierPreprocessorAnnotationOfSymbol(symbol)
           case _ => dropMultitierPreprocessorAnnotationOfTree(decl)
 
-      macroAnnotteeDeclarations foreach dropMultitierPreprocessorAnnotation
+      macroAnnotteeDeclarations foreach: decl =>
+        decl match
+          case QuotesSymbol(symbol) =>
+            if hasAnnotationSymbol(symbol, `language.multitier`) then
+              annotationTypingContext.update(symbol, quotes)
+          case _ =>
+
+        dropMultitierPreprocessorAnnotation(decl)
 
     catch
       case NonFatal(e) =>

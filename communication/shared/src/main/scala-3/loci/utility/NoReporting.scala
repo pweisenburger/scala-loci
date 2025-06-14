@@ -7,7 +7,7 @@ import scala.quoted.*
 import scala.util.control.NonFatal
 
 object noReporting:
-  def apply[T](default: => T, useExploringContext: Boolean)(body: Quotes ?=> T)(using Quotes): T =
+  def apply[T](default: => T, useExploringContext: Boolean)(using Quotes)(body: Quotes ?=> T): T =
     val invocation = try
       val contextClass = Class.forName("dotty.tools.dotc.core.Contexts$Context")
       val quotesImplClass = Class.forName("scala.quoted.runtime.impl.QuotesImpl")

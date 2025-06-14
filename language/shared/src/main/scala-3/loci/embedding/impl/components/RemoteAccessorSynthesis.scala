@@ -15,6 +15,7 @@ import scala.collection.immutable.SeqMap
 import scala.collection.mutable
 import scala.math.Ordering
 import scala.util.control.NonFatal
+import scala.quoted.Quotes
 
 object RemoteAccessorSynthesis:
   private val synthesizedModuleSignatureCache = Cache[Any, Any]
@@ -470,26 +471,41 @@ trait RemoteAccessorSynthesis:
         case _ =>
           foldOverTree(failure, tree)(owner)
 
-    private val cache = MutableCachedTypeSeqMap[Result]
+    private val cache = Cache[Quotes, MutableCachedTypeSeqMap[Result]]
 
-    def resolve(tpe: TypeRepr, message: String) =
-      cache.lookupType(tpe) getOrElse:
+    private def requoteType(from: Quotes, to: Quotes)(tpe: from.reflect.TypeRepr) =
+      to.reflect.TypeRepr.of(using from.reflect.TypeReprMethods.asType(tpe))
+
+    private def requoteTerm(from: Quotes, to: Quotes)(term: from.reflect.Term) =
+      to.reflect.asTerm(from.reflect.TreeMethods.asExpr(term))
+
+    private def searchImplicitsContextually(tpe: TypeRepr, context: Quotes) =
+      loci.utility.noReporting(None, useExploringContext = false)(using context): context ?=>
+        context.reflect.Implicits.search(requoteType(quotes, context)(tpe)) match
+          case result: context.reflect.ImplicitSearchSuccess => Some(requoteTerm(context, quotes)(result.tree))
+          case _ => None
+
+    def resolve(tpe: TypeRepr, message: String, context: Option[Quotes] = None) =
+      val contextQuotes = context getOrElse quotes
+      val contextCache = cache.getOrElseUpdate(contextQuotes)(MutableCachedTypeSeqMap())
+      contextCache.lookupType(tpe) getOrElse:
         val result =
-          noMacroCheck(Implicits.search(typeParamMasker.mask(tpe))) match
-            case result: ImplicitSearchSuccess => Result(typeParamMasker.unmask(result.tree))
-            case _ => Result.Failure(message)
-        cache.addNewTypeEntry(tpe, result)
+          noMacroCheck(searchImplicitsContextually(typeParamMasker.mask(tpe), contextQuotes)).fold(Result.Failure(message)): term =>
+            Result(typeParamMasker.unmask(term))
+        contextCache.addNewTypeEntry(tpe, result)
         result
 
-    def resolveSerializable(tpe: TypeRepr) =
+    def resolveSerializable(tpe: TypeRepr, context: Option[Quotes] = None) =
       resolve(
         symbols.serializable.typeRef.appliedTo(tpe),
-        s"${prettyType(tpe.prettyShow)} is not serializable.").asTerm
+        s"${prettyType(tpe.prettyShow)} is not serializable.",
+        context).asTerm
 
-    def resolveTransmittable(tpe: TypeRepr, allowFailureForTypeParameters: Boolean) =
+    def resolveTransmittable(tpe: TypeRepr, allowFailureForTypeParameters: Boolean, context: Option[Quotes] = None) =
       resolve(
         symbols.transmittable.typeRef.appliedTo(List(tpe, TypeBounds.empty, TypeBounds.empty, TypeBounds.empty, TypeBounds.empty)),
-        s"${prettyType(tpe.prettyShow)} is not transmittable.").asTransmittable(allowFailureForTypeParameters)
+        s"${prettyType(tpe.prettyShow)} is not transmittable.",
+        context).asTransmittable(allowFailureForTypeParameters)
   end Resolution
 
   private def signatures(module: Symbol) =
@@ -964,7 +980,7 @@ trait RemoteAccessorSynthesis:
         case Some(term) =>
           Right(term)
         case _ =>
-          val serializable = Resolution.resolveSerializable(tpe)
+          val serializable = Resolution.resolveSerializable(tpe, MultitierPreprocessor.annotationTypingContext(module))
           serializable foreach { serializableTypeMap.addNewTypeEntry(tpe, _) }
           serializable
 
@@ -1207,7 +1223,7 @@ trait RemoteAccessorSynthesis:
                     Right(resolution)
                   case _ =>
                     info("    Resolving Transmittable through implicit resolution")
-                    val transmittable = Resolution.resolveTransmittable(required.base, allowAbstractMarshallables && overridingName.isEmpty)
+                    val transmittable = Resolution.resolveTransmittable(required.base, allowAbstractMarshallables && overridingName.isEmpty, MultitierPreprocessor.annotationTypingContext(module))
                     if transmittable.isLeft then
                       info("    Resolution failed")
                     transmittable map: transmittable =>
@@ -1280,7 +1296,7 @@ trait RemoteAccessorSynthesis:
                     marshallable getOrElse:
                       forcedResolutionFailure map { Left(_) } getOrElse:
                         info("    Resolving Transmittable through implicit resolution")
-                        val transmittable = Resolution.resolveTransmittable(required.base, allowAbstractMarshallables && overridingName.isEmpty)
+                        val transmittable = Resolution.resolveTransmittable(required.base, allowAbstractMarshallables && overridingName.isEmpty, MultitierPreprocessor.annotationTypingContext(module))
                         if transmittable.isLeft then
                           info("    Resolution failed")
                         transmittable flatMap: transmittable =>
