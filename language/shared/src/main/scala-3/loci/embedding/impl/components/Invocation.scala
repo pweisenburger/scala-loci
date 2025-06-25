@@ -60,6 +60,20 @@ trait Invocation:
         s"Discouraged placed value selection notation. Expected notation: `$access ${select.name} $args`",
         Position(select.qualifier.pos.sourceFile, index, index))
 
+  private def unliftRemotes(remotes: List[Term]) =
+    remotes map:
+      case RemoteLiftingConversion(remote) => remote
+      case remote => remote
+
+  private object RemoteLiftingConversion extends
+    LiftingConversion(symbols.select.companionModule.moduleClass)
+
+  private object NestedApplies:
+    def unapply(term: Term): Option[List[Term]] = term match
+      case Apply(NestedApplies(args), _) => Some(args)
+      case Apply(_, args) => Some(args)
+      case _ => None
+
   private object SubjectiveLocalAccess:
     def unapply(term: Term) = term match
       case Apply(Apply(TypeApply(Select(expr @ PlacedValueReference(reference, placementInfo), names.to), _), List(remote)), _)
@@ -80,13 +94,19 @@ trait Invocation:
 
   private object CallSelection:
     def unapply(term: Term) = term match
-      case Apply(typeApply @ TypeApply(_, remoteTypeTree :: _), VarArgs(remotes)) if term.symbol.maybeOwner == symbols.select =>
-        Some(Left(remoteTypeTree.tpe, remotes), () => s"remote(${argsNotation(remotes)})", notationCheck(typeApply, infix = false))
-      case TypeApply(_, List(remoteTypeTree)) if term.symbol == symbols.remoteApply =>
-        val (arg, pos) = notationPositionCheck(term.pos, infix = false, applied = true) match
-          case (Some(arg), pos) if arg forall { ch => ch != '\r' && ch != '\n' } => (arg, pos)
-          case (_, pos) => ("...", pos)
-        Some(Right(remoteTypeTree.tpe), () => s"remote[$arg]", pos)
+      case Apply(typeApply @ TypeApply(_, _), VarArgs(remotes @ _ :: _)) if term.symbol.maybeOwner == symbols.select =>
+        Some(Left(term.tpe.typeArgs.head.dealias, unliftRemotes(remotes)), () => s"remote(${argsNotation(remotes)})", notationCheck(typeApply, infix = false))
+      case NestedApplies(VarArgs(remotes @ _ :: _)) if term.symbol.maybeOwner == symbols.remoteApplication.owner =>
+        Some(Left(term.tpe.typeArgs.head.dealias, unliftRemotes(remotes)), () => s"remote(${argsNotation(remotes)})", None)
+      case TypeApply(_, List(remoteTypeTree)) if term.symbol == symbols.remoteApplication =>
+        remoteTypeTree match
+          case Inferred() if remoteTypeTree.tpe =:= TypeRepr.of[Nothing] =>
+            None
+          case _ =>
+            val (arg, pos) = notationPositionCheck(term.pos, infix = false, applied = true) match
+              case (Some(arg), pos) if arg forall { ch => ch != '\r' && ch != '\n' } => (arg, pos)
+              case (_, pos) => ("...", pos)
+            Some(Right(remoteTypeTree.tpe), () => s"remote[$arg]", pos)
       case _ =>
         None
 
@@ -464,13 +484,16 @@ trait Invocation:
                             .appliedToTypes(List(typeArgs.head, typeArgs.last))
                             .appliedTo(arguments, placed, signature, instances, requestResult)
 
+                        val discarded = Literal(UnitConstant())
+                        val discardedAccessResult = Block(List(access), Literal(UnitConstant()))
+
                         if selectionMode.instanceBased then
                           selectionMode.instancesCount match
-                            case -1 => If(instances.select(symbols.iterableNonEmpty), Block(List(access), Literal(UnitConstant())), Literal(UnitConstant()))
-                            case 0 => Literal(UnitConstant())
-                            case _ => access
+                            case -1 => If(instances.select(symbols.iterableNonEmpty), discardedAccessResult, discarded)
+                            case 0 => discarded
+                            case _ => discardedAccessResult
                         else
-                          access
+                          discardedAccessResult
                     end result
 
                     val Block((valDef: ValDef) :: stats, term) = result: @unchecked

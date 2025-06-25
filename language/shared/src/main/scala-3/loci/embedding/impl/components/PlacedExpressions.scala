@@ -13,24 +13,8 @@ trait PlacedExpressions:
   this: Component & Commons & ErrorReporter & Placements & NonPlacements & PlacedTransformations & PlacedStatements =>
   import quotes.reflect.*
 
-  private object PlacementLiftingConversion:
-    def unapply(term: Term) = term match
-      case Inlined(Some(call), List(conversion: ValDef), erased @ MaybeTyped(Apply(_, VarArgs(List(MaybeInlined(rhs))))))
-        if call.symbol == symbols.placed.companionModule.moduleClass &&
-           !(conversion.tpt.tpe =:= TypeRepr.of[Nothing]) && conversion.tpt.tpe <:< types.conversion &&
-           !(erased.tpe =:= TypeRepr.of[Nothing]) && erased.tpe <:< types.placed =>
-        Some(rhs)
-      case Inlined(Some(call), List(conversion: ValDef, ValDef(_, _, Some(MaybeInlined(rhs)))), erased @ MaybeTyped(Apply(_, List(_))))
-        if call.symbol == symbols.placed.companionModule.moduleClass &&
-           !(conversion.tpt.tpe =:= TypeRepr.of[Nothing]) && conversion.tpt.tpe <:< types.conversion &&
-           !(erased.tpe =:= TypeRepr.of[Nothing]) && erased.tpe <:< types.placed =>
-        Some(rhs)
-      case Apply(Select(conversion, _), List(MaybeInlined(rhs)))
-        if conversion.symbol.exists && conversion.symbol.owner == symbols.placed.companionModule.moduleClass &&
-           !(conversion.tpe =:= TypeRepr.of[Nothing]) && conversion.tpe <:< types.conversion =>
-        Some(rhs)
-      case _ =>
-        None
+  private object PlacementLiftingConversion extends
+    LiftingConversion(symbols.placed.companionModule.moduleClass)
 
   private object MultitierConstructFragment:
     def unapply(term: Term) = term match
@@ -46,7 +30,13 @@ trait PlacedExpressions:
 
   private object Narrowing:
     def unapply(term: Term) = term match
-      case Apply(_, List(arg)) if term.symbol.maybeOwner == symbols.narrow =>
+      case Apply(fun, List(arg)) if term.symbol.maybeOwner == symbols.narrow =>
+        val code = SourceCode(fun.pos.sourceFile)
+        val index = code.backwardSkipToToken(code.backwardSkipToken(fun.pos.end - 1))
+        if index >= 0 && code(index) == '.' then
+          report.warning(
+            s"Discouraged remote value access notation. Expected notation: `remote value <placed value>`",
+            Position(fun.pos.sourceFile, index, index))
         Some(arg)
       case _ =>
         Some(term)
@@ -65,7 +55,8 @@ trait PlacedExpressions:
         val owner = symbol.maybeOwner
         owner == symbols.select || owner == symbols.run ||
         owner == symbols.capture || owner == symbols.block ||
-        owner == symbols.narrow || owner == symbols.call
+        owner == symbols.narrow || owner == symbols.call ||
+        owner == symbols.remoteApplication.owner
 
   private enum PlacementConstruct:
     case Transmission, Construction, Selection, None
@@ -79,6 +70,7 @@ trait PlacedExpressions:
         if owner == symbols.select || owner == symbols.run ||
            owner == symbols.capture || owner == symbols.block ||
            owner == symbols.narrow || owner == symbols.call ||
+           owner == symbols.remoteApplication.owner ||
            (symbols.transmission.info.baseClasses contains owner) ||
            (symbols.subjectivity.info.baseClasses contains owner) ||
            (symbols.multiplicity.info.baseClasses contains owner) ||

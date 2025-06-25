@@ -14,24 +14,40 @@ trait PlacedBlocks:
   this: Component & Commons & ErrorReporter & AccessNotation & Annotations & Placements =>
   import quotes.reflect.*
 
+  private def unliftRemotes(remotes: List[Term]) =
+    remotes map:
+      case RemoteLiftingConversion(remote) => remote
+      case remote => remote
+
+  private object RemoteLiftingConversion extends
+    LiftingConversion(symbols.select.companionModule.moduleClass)
+
+  private object NestedApplies:
+    def unapply(term: Term): Option[List[Term]] = term match
+      case Apply(NestedApplies(args), _) => Some(args)
+      case Apply(_, args) => Some(args)
+      case _ => None
+
   private object Selection:
     def unapply(term: Term) = term match
-      case Apply(typeApply @ TypeApply(fun, remoteTypeTree :: _), remotes) if term.symbol.maybeOwner == symbols.select =>
-        Some(remoteTypeTree, remotes, () => s"on(${argsNotation(remotes)})", notationCheck(typeApply, infix = false))
+      case Apply(typeApply @ TypeApply(_, _), remotes) if term.symbol.maybeOwner == symbols.select =>
+        Some(unliftRemotes(remotes), () => s"on(${argsNotation(remotes)})", notationCheck(typeApply, infix = false))
+      case NestedApplies(VarArgs(remotes @ _ :: _)) if term.symbol.maybeOwner == symbols.remoteApplication.owner =>
+        Some(unliftRemotes(remotes), () => s"on(${argsNotation(remotes)})", None)
       case _ =>
         None
 
   private object Run:
     def unapply(term: Term) = term match
-      case Apply(typeApply @ TypeApply(Select(prefix, _), _), _) if prefix.tpe derivesFrom symbols.run =>
+      case Apply(Apply(_, List(prefix)), _) if term.symbol.maybeOwner == symbols.run.companionModule.moduleClass =>
         prefix match
-          case Selection(remoteTypeTree, remotes, construct, pos) =>
-            Some(Some(remoteTypeTree, remotes), () => s"${construct()}.run", pos orElse notationCheck(typeApply, infix = false))
+          case Selection(remotes, construct, pos) =>
+            Some(Some(remotes), () => s"${construct()}.run", pos)
           case _ =>
             val (arg, pos) = notationPositionCheck(prefix.pos, infix = false, applied = true) match
               case (Some(arg), pos) if arg forall { ch => ch != '\r' && ch != '\n' } => (arg, pos)
               case (_, pos) => ("...", pos)
-            Some(None, () => s"on[$arg].run", pos orElse notationCheck(typeApply, infix = false))
+            Some(None, () => s"on[$arg].run", pos)
       case _ =>
         None
 
@@ -64,7 +80,7 @@ trait PlacedBlocks:
             val access = if name != names.apply then s" $name" else ""
             report.warning(s"Discouraged placed block notation. Expected notation: `${construct()}$access`", pos.get)
           else if posCaptureWarning.isDefined then
-            report.info("Placed block does not require `capture` clause.", posCaptureWarning.get)
+            report.info("Empty `capture` clause on placed block can be left out.", posCaptureWarning.get)
           result
       case _ =>
         None
@@ -235,18 +251,37 @@ trait PlacedBlocks:
 
           blockMethods.insert(index, definition)
 
-          def select(term: Term, remoteTypeTree: TypeTree, remotes: List[Term]) =
-            term.appliedToTypeTrees(List(remoteTypeTree, TypeTree.of[Nothing])).appliedToArgs(remotes)
-
           val selected = selection match
-            case Some(remoteTypeTree, remotes @ List(_)) if from.typeSymbol == symbols.fromMultiple =>
-              select(Ref(symbols.remoteApply.owner.companionModule).select(symbols.selectApplySeq), remoteTypeTree, remotes)
-            case Some(remoteTypeTree, remotes @ List(_)) if from.typeSymbol == symbols.fromSingle =>
-              select(Ref(symbols.remoteApply.owner.companionModule).select(symbols.selectApplySingle), remoteTypeTree, remotes)
-            case Some(remoteTypeTree, remotes) =>
-              select(Ref(symbols.remoteApply.owner.companionModule).select(symbols.selectApplyMultiple), remoteTypeTree, remotes)
+            case Some(remotes @ List(_)) if from.typeSymbol == symbols.fromMultiple =>
+              Ref(symbols.remoteApplicationWithArg).appliedTo(Ref(symbols.liftRemoteSeq).appliedToType(remote).select(symbols.function1Apply).appliedToArgs(remotes))
+            case Some(remotes @ List(_)) if from.typeSymbol == symbols.fromSingle =>
+              Ref(symbols.remoteApplicationWithArg).appliedTo(Ref(symbols.liftRemote).appliedToType(remote).select(symbols.function1Apply).appliedToArgs(remotes))
+            case Some(remotes) =>
+              val (init, tail) = remotes.splitAt(2)
+              val tpe = symbols.remote.typeRef.appliedTo(remote)
+              Ref(symbols.remoteApplicationWithVarArgs).appliedToType(remote).appliedToArgs(
+                init :+
+                Typed(
+                  Repeated(tail, TypeTree.of(using tpe.asType)),
+                  TypeTree.of(using symbols.repeated.typeRef.appliedTo(tpe).asType)))
             case _ =>
-              Ref(symbols.remoteApply).appliedToType(remote)
+              Ref(symbols.remoteApplication).appliedToType(remote)
+
+//          val selected = selection match
+//            case Some(remotes @ List(_)) if from.typeSymbol == symbols.fromMultiple =>
+//              Ref(symbols.remoteApply.owner.companionModule).select(symbols.selectApplySeq).appliedToTypes(List(remote, TypeRepr.of[Nothing])).appliedToArgs(remotes)
+//            case Some(remotes @ List(_)) if from.typeSymbol == symbols.fromSingle =>
+//              Ref(symbols.remoteApply.owner.companionModule).select(symbols.selectApplySingle).appliedToTypes(List(remote, TypeRepr.of[Nothing])).appliedToArgs(remotes)
+//            case Some(remotes) =>
+//              val (init, tail) = remotes.splitAt(2)
+//              val tpe = symbols.remote.typeRef.appliedTo(remote)
+//              Ref(symbols.remoteApply.owner.companionModule).select(symbols.selectApplyMultiple).appliedToTypes(List(remote, TypeRepr.of[Nothing])).appliedToArgs(
+//                init :+
+//                Typed(
+//                  Repeated(tail, TypeTree.of(using tpe.asType)),
+//                  TypeTree.of(using symbols.repeated.typeRef.appliedTo(tpe).asType)))
+//            case _ =>
+//              Ref(symbols.remoteApply).appliedToType(remote)
 
           val call = selected
             .select(symbols.callApply)

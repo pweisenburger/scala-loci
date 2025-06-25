@@ -759,7 +759,8 @@ object MultitierPreprocessor:
     val nonplaced = Symbol.requiredClass("loci.embedding.Multitier.nonplaced")
     val peer = Symbol.requiredClass("loci.language.peer")
     val deferred = Symbol.requiredClass("loci.language.deferred")
-    val placed = Symbol.requiredMethod("loci.language.placed.apply")
+    val placed = Symbol.requiredMethod("loci.language.placed")
+//    val placed = Symbol.requiredMethod("loci.language.placed.apply")
     val and = Symbol.requiredMethod("loci.language.and")
     val erased = (Symbol.requiredPackage("loci.embedding").methodMember("erased") find { _.paramSymss.sizeIs == 1 }).get
     val compileTimeOnly = Symbol.requiredClass("scala.annotation.compileTimeOnly")

@@ -18,14 +18,14 @@ trait PlacedStatements:
   private object PlacementCallBindingArtifact:
     def unapply(term: Term): Option[(List[Definition], Term)] = term match
       case Inlined(Some(call), bindings, body)
-          if call.symbol.hasAncestor(symbols.on, symbols.on.companionModule.moduleClass) =>
+          if call.symbol.hasAncestor(symbols.on, symbols.on.companionModule.moduleClass, symbols.remoteApplication.owner) =>
         Some(bindings, body)
       case _ =>
         None
 
   private object PlacementCallContextEvidenceArtifact:
     def unapply(term: Term): Option[(Definition, Term)] = term match
-      case Inlined(_, List(), block @ Block((evidence: ValDef) :: statements, expr))
+      case Inlined(_, List(), block @ Block((evidence: ValDef) :: statements, MaybeInlined(expr)))
           if (evidence.symbol.flags is Flags.Synthetic) &&
              !(evidence.tpt.tpe =:= TypeRepr.of[Nothing]) &&
              evidence.tpt.tpe <:< types.context =>

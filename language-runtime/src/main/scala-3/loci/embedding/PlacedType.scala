@@ -99,14 +99,14 @@ sealed trait PlacedCleanHigherKind8 extends PlacedCleanHigherKind7:
   : PlacedClean[T[T0, T1, T2, T3, T4, T5, T6, T7], T_, T[U0, U1, U2, U3, U4, U5, U6, U7]] = erased
 
 sealed trait PlacedCleanSelectionByType extends PlacedCleanHigherKind8:
-  given selection[T, P](using scala.DummyImplicit):
-    PlacedClean[T from P, T from P, Unit] = erased
+  given selection[T, P](using scala.DummyImplicit)
+    : PlacedClean[T from P, T from P, Unit] = erased
 
 sealed trait PlacedCleanSelectionByInstance extends PlacedCleanSelectionByType:
-  given selectionSingle[T, P](using scala.DummyImplicit):
-    PlacedClean[T fromSingle P, T fromSingle P, Unit] = erased
-  given selectionMultiple[L, T, P](using scala.DummyImplicit):
-    PlacedClean[T fromMultiple P, T fromMultiple P, Unit] = erased
+  given selectionSingle[T, P](using scala.DummyImplicit)
+    : PlacedClean[T fromSingle P, T fromSingle P, Unit] = erased
+  given selectionMultiple[L, T, P](using scala.DummyImplicit)
+    : PlacedClean[T fromMultiple P, T fromMultiple P, Unit] = erased
 
 sealed trait PlacedCleanPlacedValue extends PlacedCleanSelectionByInstance:
   given placed0[T, U, P, _on_[T, P] <: T on P](using PlacedClean[T, T, U])

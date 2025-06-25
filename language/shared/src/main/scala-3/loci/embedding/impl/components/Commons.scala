@@ -61,10 +61,15 @@ trait Commons:
     val placed = TypeRepr.of[Placed[?, ?]].typeSymbol
     val subjective = TypeRepr.of[Placed.Subjective[?, ?]].typeSymbol
     val remote = TypeRepr.of[language.Remote[?]].typeSymbol
-    val remoteApply = '{ language.remote.apply }.symbol
-    val selectApplySingle = '{ ?[embedding.Select[?]].apply(?[language.Remote[?]]) }.symbol
-    val selectApplyMultiple = '{ ?[embedding.Select[?]].apply(?[language.Remote[?]], ?[language.Remote[?]]) }.symbol
-    val selectApplySeq = '{ ?[embedding.Select[?]].apply(?[Seq[language.Remote[?]]]) }.symbol
+    val remoteApplication = '{ language.remote }.symbol
+    val remoteApplicationWithArg = '{ language.remote(?[embedding.Select.Remote[?, ?]]) }.symbol
+    val remoteApplicationWithVarArgs = '{ language.remote(?[language.Remote[?]], ?[language.Remote[?]]) }.symbol
+//    val remoteApply = '{ language.remote.apply }.symbol
+//    val selectApplySingle = '{ ?[embedding.Select[?]].apply(?[language.Remote[?]]) }.symbol
+//    val selectApplyMultiple = '{ ?[embedding.Select[?]].apply(?[language.Remote[?]], ?[language.Remote[?]]) }.symbol
+//    val selectApplySeq = '{ ?[embedding.Select[?]].apply(?[Seq[language.Remote[?]]]) }.symbol
+    val liftRemote = '{ embedding.Select.liftRemote }.symbol
+    val liftRemoteSeq = '{ embedding.Select.liftRemoteSeq }.symbol
     val callApply = '{ ?[embedding.Call[?, ?]].call(?) }.symbol
     val remoteReference = '{ language.Remote.reference(?) }.symbol
     val and = '{ language.and(?)(?)(using ?, ?) }.symbol
@@ -237,6 +242,20 @@ trait Commons:
       terms flatMap:
         case Typed(Repeated(args, _), _)  => args
         case arg => List(arg)
+
+  class LiftingConversion(owner: Symbol):
+    def unapply(term: Term) = term match
+      case Inlined(Some(call), List(conversion: ValDef), MaybeTyped(Apply(_, VarArgs(List(MaybeInlined(rhs))))))
+          if call.symbol == owner && !(conversion.tpt.tpe =:= TypeRepr.of[Nothing]) && conversion.tpt.tpe <:< types.conversion =>
+        Some(rhs)
+      case Inlined(Some(call), List(conversion: ValDef, ValDef(_, _, Some(MaybeInlined(rhs)))), MaybeTyped(Apply(_, List(_))))
+          if call.symbol == owner && !(conversion.tpt.tpe =:= TypeRepr.of[Nothing]) && conversion.tpt.tpe <:< types.conversion =>
+        Some(rhs)
+      case Apply(Select(conversion, _), List(MaybeInlined(rhs)))
+          if conversion.symbol.maybeOwner == owner && !(conversion.tpe =:= TypeRepr.of[Nothing]) && conversion.tpe <:< types.conversion =>
+        Some(rhs)
+      case _ =>
+        None
 
   final class PackedValueType[T](using t: Type[T]):
     opaque type Type = T
