@@ -836,9 +836,9 @@ trait RemoteAccessorSynthesis:
                     if !(transmittable.types.base =:= other.types.base) ||
                        !(transmittable.types.intermediate =:= other.types.intermediate) ||
                        !(transmittable.types.result =:= other.types.result) then
-                      errorAndCancel(s"${incoherenceMessage(other.types.base)}. Found ${prettyType(other.types.show)} and ${prettyType(transmittable.types.show)}.", pos)
+                      errorAndCancel(s"${incoherenceMessage(other.types.base)}.\nFound ${prettyType(other.types.show)}\n  and ${prettyType(transmittable.types.show)}.", pos)
                     else if !(transmittable.types.proxy =:= other.types.proxy) then
-                      errorAndCancel(s"${incoherenceMessage(other.types.base)}. Found ${prettyType(other.types.showMore)} and ${prettyType(transmittable.types.showMore)}.", pos)
+                      errorAndCancel(s"${incoherenceMessage(other.types.base)}.\nFound ${prettyType(other.types.showMore)}\n  and ${prettyType(transmittable.types.showMore)}.", pos)
                     else
                       errorAndCancel(s"${incoherenceMessage(other.types.base)} with type ${prettyType(transmittable.types.showMore)}.", pos)
                 case _ =>
@@ -993,8 +993,10 @@ trait RemoteAccessorSynthesis:
 
       def transmittableResolutionFailureMessage(types: TransmittableTypes) =
         val message = s"${prettyType(types.base.prettyShow)} is not transmittable"
-        if required.maybeProxy.nonEmpty then s"$message. Found ${prettyType(types.showMore)}, required ${prettyType(requiredTypes.showMore)}."
-        else s"$message. Found ${prettyType(types.show)}, required ${prettyType(requiredTypes.show)}."
+        if required.maybeProxy.nonEmpty then
+          s"$message.\n   Found: ${prettyType(types.showMore)}\nRequired: ${prettyType(requiredTypes.showMore)}."
+        else
+          s"$message.\n   Found: ${prettyType(types.show)}\nRequired: ${prettyType(requiredTypes.show)}."
 
       def generateMarshallableName() =
         overridingName getOrElse:
@@ -1199,7 +1201,7 @@ trait RemoteAccessorSynthesis:
       end generatedMarshallable
 
       generatedMarshallable.left foreach: message =>
-        info(s"    Synthesis failed: $message")
+        info(s"    Synthesis failed: ${strippedSingleLineMessage(message)}")
         resolution foreach: resolution =>
           snapshot foreach: snapshot =>
             info("    Rolling back modifications of failed synthesis attempt")

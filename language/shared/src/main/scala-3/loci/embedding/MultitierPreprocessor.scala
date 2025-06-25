@@ -48,6 +48,16 @@ object MultitierPreprocessor:
   def moduleArgumentImpl(using Quotes): Expr[MultitierPreprocessor] =
     import quotes.reflect.*
 
+    SymbolMutator.get foreach: symbolMutator =>
+      Symbol.requiredMethod("loci.language.and") ::
+      Symbol.requiredMethod("loci.language.placed") ::
+      Symbol.requiredClass("loci.language.multitier") ::
+      Symbol.requiredClass("loci.embedding.On.Placed").declaredMethod("apply") ++
+      Symbol.requiredClass("loci.embedding.On").declaredMethod("apply") ++
+      Symbol.requiredClass("loci.embedding.On").declaredMethod("local") ++
+      Symbol.requiredClass("loci.embedding.On").declaredMethod("sbj") foreach:
+        symbolMutator.removeAnnotation(_, TypeRepr.of[annotation.experimental].typeSymbol)
+
     try
       val commons = Commons()
       val reflectionExtensions = ReflectionExtensions()
