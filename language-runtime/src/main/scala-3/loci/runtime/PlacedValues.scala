@@ -13,5 +13,5 @@ trait PlacedValues:
       path: List[String],
       reference: Value.Reference): Try[MessageBuffer] =
     Failure(new transmitter.RemoteAccessException(
-      s"request for ${Value.Signature.serialize(signature)} could not be dispatched"))
+      s"request for $signature could not be dispatched"))
 end PlacedValues

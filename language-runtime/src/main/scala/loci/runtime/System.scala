@@ -420,9 +420,10 @@ class System(
             val messages = mutable.ListBuffer.empty[Message[Method]]
             channelMessages.put(channelName, messages)
 
-            logging.trace(s"handling remote access for $signature from $remote over channel $channelName")
-
-            val result = values.$loci$dispatch(payload, signature, signature.path, reference)
+            val result = signature flatMap { signature =>
+              logging.trace(s"handling remote access for $signature from $remote over channel $channelName")
+              values.$loci$dispatch(payload, signature, signature.path, reference)
+            }
 
             if (messageType == ChannelMessage.Type.Request) {
               val message = result match {
@@ -434,7 +435,7 @@ class System(
                   ChannelMessage(ChannelMessage.Type.Failure, channelName, None, payload)
               }
 
-              logging.trace(s"sending remote access response for $signature to $remote over channel $channelName")
+              logging.trace(s"sending remote access response for ${signature map { _.toString } getOrElse abstraction} to $remote over channel $channelName")
 
               remoteConnections.send(remote, message)
 

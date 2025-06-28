@@ -1,53 +1,29 @@
 package loci
 package runtime
 
-import scala.collection.mutable
+import transmitter.Parser._
+
+import scala.util.Try
 
 object Value {
   case class Signature(name: String, module: String, path: List[String]) {
     override def toString: String =
-      if (path.isEmpty) s"$module.$name" else s"${path mkString "."}.$name[$module]"
+      if (path.isEmpty) s"$module: $name" else s"$module.${path mkString "."}: $name"
   }
 
   object Signature {
     def serialize(signature: Signature): String =
-      if (signature.path.isEmpty)
-        s"${signature.module}!${signature.name}"
-      else
-        s"${signature.module}!${signature.path mkString "."}.${signature.name}"
+      elements(
+        string(signature.name),
+        string(signature.module),
+        list(signature.path map string)).toString
 
-    def deserialize(signature: String): Signature = {
-      var first = 0
-      var last = 0
-      val end = signature.length
-      val buffer = mutable.ListBuffer.empty[String]
-
-      while (last < end && first < end)
-        signature(last) match {
-          case '!' =>
-            first = end
-          case _ =>
-            last += 1
-        }
-
-      val module = signature.substring(0, last)
-      if (last < end)
-        last += 1
-      first = last
-
-      while (last < end)
-        signature(last) match {
-          case '.' =>
-            buffer += signature.substring(first, last)
-            last += 1
-            first = last
-          case '(' | ':' =>
-            last = end
-          case _ =>
-            last += 1
-        }
-
-      Signature(signature.substring(first, end), module, buffer.toList)
+    def deserialize(signature: String): Try[Signature] = Try {
+      val Seq(name, module, path) = parse(signature).asElements(3): @unchecked
+      Signature(
+        name.asString,
+        module.asString,
+        path.asList map { _.asString })
     }
   }
 
