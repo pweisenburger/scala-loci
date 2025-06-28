@@ -259,22 +259,16 @@ trait Dispatch:
         synthesizedPlacedValues(stat.symbol).fold(stat): placedValues =>
           val valueDispatching = valueDispatchings.getOrElse(stat.symbol, List.empty)
 
-          if valueDispatching.nonEmpty || placedValues.peer == defn.AnyClass && moduleDispatching.nonEmpty then
-            val tpe = MethodType(
-              List("request", "signature", "path", "reference"))(
-              _ => List(types.messageBuffer, types.valueSignature, TypeRepr.of[List[String]], types.valueReference),
-              _ => symbols.`try`.typeRef.appliedTo(types.messageBuffer))
-            val symbol = newMethod(stat.symbol, names.dispatch, tpe, Flags.Synthetic | Flags.Override, Symbol.noSymbol)
+          val List(symbol) = stat.symbol.declaredMethod(names.dispatch): @unchecked
 
-            SymbolMutator.getOrErrorAndAbort.enter(stat.symbol, symbol)
+          def body(argss: List[List[Tree]]) =
+            val args @ List(request, signature, path, reference) = argss.head map { arg => Ref(arg.symbol) }: @unchecked
+            val fallback = Select.unique(Super(This(stat.symbol), None), names.dispatch).appliedToArgs(args)
 
-            def body(argss: List[List[Tree]]) =
-              val args @ List(request, signature, path, reference) = argss.head map { arg => Ref(arg.symbol) }: @unchecked
-              val fallback = Select.unique(Super(This(stat.symbol), None), names.dispatch).appliedToArgs(args)
-              val default = CaseDef(Wildcard(), guard = None, fallback)
-
+            if valueDispatching.nonEmpty || moduleDispatching.nonEmpty then
               val (identifier, _) = synthesizeModuleSignature(module.symbol)
 
+              val default = CaseDef(Wildcard(), guard = None, fallback)
               val emptyPath = path.select(symbols.iterableIsEmpty)
               val matchingSignatures = Select.unique(signature.select(symbols.valueSignatureModule), "==").appliedTo(This(module.symbol).select(identifier))
 
@@ -295,14 +289,13 @@ trait Dispatch:
                   If(emptyPath, If(matchingSignatures, valueDispatch, fallback), moduleDispatch)
               else
                 If(Select.unique(emptyPath, "&&").appliedTo(matchingSignatures), valueDispatch, fallback)
-            end body
+            else
+              fallback
+          end body
 
-            val dispatch = DefDef(symbol, argss => Some(body(argss)))
+          val dispatch = DefDef(symbol, argss => Some(body(argss)))
 
-            ClassDef.copy(stat)(stat.name, stat.constructor, stat.parents, stat.self, stat.body :+ dispatch)
-
-          else
-            stat
+          ClassDef.copy(stat)(stat.name, stat.constructor, stat.parents, stat.self, stat.body :+ dispatch)
 
       case stat =>
         stat

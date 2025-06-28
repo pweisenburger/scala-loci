@@ -140,7 +140,8 @@ trait RemoteAccessorSynthesis:
     constructFullName(symbol,
       name = symbol => encodeName(targetName(symbol)),
       separator = symbol => if symbol.isPackageDef then "." else "$",
-      skip = _.isPackageObject)
+      skip = _.isPackageObject,
+      moduleClassAsModule = false)
 
   private def showType(tpe: TypeRepr) = tpe match
     case TypeBounds(low, hi) if low.typeSymbol == defn.NothingClass && hi.typeSymbol == defn.AnyClass => "?"

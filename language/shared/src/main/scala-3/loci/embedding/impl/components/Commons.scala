@@ -588,16 +588,16 @@ trait Commons:
     case _ =>
       None
 
-  def constructFullName(symbol: Symbol, name: Symbol => String, separator: Symbol => String, skip: Symbol => Boolean): String =
-    def constructFullName(symbol: Symbol, suffix: String): String =
-      val current = if symbol.isClassDef && symbol.isModuleDef then symbol.companionModule else symbol
+  def constructFullName(symbol: Symbol, name: Symbol => String, separator: Symbol => String, skip: Symbol => Boolean, moduleClassAsModule: Boolean): String =
+    def constructFullName(symbol: Symbol, suffix: String, moduleClassAsModule: Boolean): String =
+      val current = if moduleClassAsModule && symbol.isClassDef && symbol.isModuleDef then symbol.companionModule else symbol
       val owner = current.maybeOwner
       val currentName = name(current)
 
       if owner.exists && suffix.nonEmpty && skip(current) then
-        constructFullName(owner, suffix)
+        constructFullName(owner, suffix, moduleClassAsModule = false)
       else
-        val prefix = if !owner.exists || owner == defn.RootClass then currentName else constructFullName(owner, currentName)
+        val prefix = if !owner.exists || owner == defn.RootClass then currentName else constructFullName(owner, currentName, moduleClassAsModule = false)
 
         if prefix.isEmpty || (prefix == "_root_" && suffix.nonEmpty) then
           suffix
@@ -607,12 +607,13 @@ trait Commons:
           s"$prefix${separator(current)}$suffix"
     end constructFullName
 
-    constructFullName(symbol, "")
+    constructFullName(symbol, "", moduleClassAsModule)
   end constructFullName
 
   def fullName(symbol: Symbol): String =
     constructFullName(symbol,
       name = _.name,
       separator = symbol => if symbol.isType && !symbol.isPackageDef && !symbol.isModuleDef then "#" else ".",
-      skip = symbol => symbol.isAnonymousClass || symbol.isAnonymousFunction || symbol.isPackageObject)
+      skip = symbol => symbol.isAnonymousClass || symbol.isAnonymousFunction || symbol.isPackageObject,
+      moduleClassAsModule = true)
 end Commons

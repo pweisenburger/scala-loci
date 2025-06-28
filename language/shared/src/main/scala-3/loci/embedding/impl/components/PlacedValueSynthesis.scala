@@ -421,6 +421,20 @@ trait PlacedValueSynthesis:
                     List.empty
           end decls
 
+          val dispatch =
+            if isMultitierModule(module) then
+              val info = MethodType(
+                List("request", "signature", "path", "reference"))(
+                _ => List(types.messageBuffer, types.valueSignature, TypeRepr.of[List[String]], types.valueReference),
+                _ => symbols.`try`.typeRef.appliedTo(types.messageBuffer))
+
+              val dispatch = symbol.declaredMethod(names.dispatch) find { _.info =:= info } getOrElse:
+                newMethod(symbol, names.dispatch, info, Flags.Synthetic | Flags.Override, Symbol.noSymbol)
+
+              List(dispatch)
+            else
+              List.empty
+
           if peer == defn.AnyClass &&
              (module.owner hasAncestor isMultitierModule) &&
              (parents forall { _.typeSymbol.maybeOwner.maybeOwner != symbol.maybeOwner.maybeOwner }) then
@@ -428,9 +442,9 @@ trait PlacedValueSynthesis:
             val parameter = symbol.declaredField(name) orElse:
               val placedValues = synthesizedPlacedValues(module.owner, defn.AnyClass).symbol
               newVal(symbol, name, placedValues.typeRef, Flags.ParamAccessor, Symbol.noSymbol)
-            parameter :: decls
+            parameter :: decls ++ dispatch
           else
-            decls
+            decls ++ dispatch
         end symbolDecls
 
         val symbolName = if peer == defn.AnyClass then s"<${names.placedValues} of $form $name>" else s"<${names.placedValues} on $name$separator${peer.name}>"
