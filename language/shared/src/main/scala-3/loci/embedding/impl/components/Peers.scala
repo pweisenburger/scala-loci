@@ -28,18 +28,21 @@ trait Peers:
     def apply(tpe: TypeRepr): Option[PeerInfo] =
       check(tpe, Left(Position.ofMacroExpansion), None, shallow = false).toOption
 
-    def check(tpe: TypeRepr, pos: Position = Position.ofMacroExpansion): Either[(String, quotes.reflect.Position), PeerInfo] =
+    def check(tpe: TypeRepr, pos: Position = Position.ofMacroExpansion): Either[(String, Position), PeerInfo] =
       check(tpe, Left(pos), None, shallow = false)
 
-    def check(tree: TypeDef): Either[(String, quotes.reflect.Position), PeerInfo] =
+    def check(tree: TypeDef): Either[(String, Position), PeerInfo] =
       check(ThisType(tree.symbol.owner).select(tree.symbol), Right(tree), None, shallow = false)
 
-    def check(tree: TypeDef, shallow: Boolean): Either[(String, quotes.reflect.Position), PeerInfo] =
+    def check(tree: TypeDef, shallow: Boolean): Either[(String, Position), PeerInfo] =
       check(ThisType(tree.symbol.owner).select(tree.symbol), Right(tree), None, shallow)
 
     @targetName("ofModuleSymbol")
     def ofModule(symbol: Symbol): List[PeerInfo] =
-      ofModule(ThisType(symbol))
+      if symbol.moduleClass.exists then
+        ofModule(ThisType(symbol.moduleClass))
+      else
+        ofModule(ThisType(symbol))
 
     @targetName("ofModuleType")
     def ofModule(tpe: TypeRepr): List[PeerInfo] =

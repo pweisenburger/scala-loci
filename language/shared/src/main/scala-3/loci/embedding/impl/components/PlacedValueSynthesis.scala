@@ -446,7 +446,7 @@ trait PlacedValueSynthesis:
               symbol
 
             case _ =>
-              val symbolFlags = Flags.Synthetic | Flags.Trait | (if peer != defn.AnyClass then Flags.NoInits else Flags.EmptyFlags)
+              val symbolFlags = Flags.Synthetic | Flags.Invisible | Flags.Trait | (if peer != defn.AnyClass then Flags.NoInits else Flags.EmptyFlags)
               val symbol = newClass(module, if canMakeTargetName then symbolName else symbolMangledName, symbolFlags, parents, symbolDecls, selfType)
               tryMakeTargetName(symbol, symbolMangledName)
 

@@ -7,7 +7,7 @@ import utility.noMacroCheck
 import utility.reflectionExtensions.*
 import language.AccessorGeneration.*
 
-import java.lang.reflect.Method
+import java.lang.reflect.{AccessibleObject, Field, Method}
 import java.util.IdentityHashMap
 import scala.annotation.experimental
 import scala.annotation.unchecked.uncheckedVariance
@@ -72,7 +72,7 @@ trait RemoteAccessorSynthesis:
           true
         else
           hasMultitierParent
-      val flags = Flags.Lazy | (if hasMultitierParent then Flags.Override else Flags.EmptyFlags)
+      val flags = Flags.Synthetic | Flags.Invisible | Flags.Lazy | (if hasMultitierParent then Flags.Override else Flags.EmptyFlags)
       val identifier = newVal(module, names.module, TypeRepr.of[String], flags, Symbol.noSymbol)
       val signature = newVal(module, names.signature, types.moduleSignature, flags, Symbol.noSymbol)
       SymbolMutator.getOrErrorAndAbort.enter(module, identifier)
@@ -91,8 +91,8 @@ trait RemoteAccessorSynthesis:
           isOverriddingPeer
       val overridingFlags = if isOverriddingPeer then Flags.Override else Flags.EmptyFlags
       val info = ByNameType(symbols.map.typeRef.appliedTo(List(types.peerSignature, types.peerTie)))
-      val signature = newVal(module, s"${names.peerSignature}${peer.name}", types.peerSignature, Flags.Lazy | overridingFlags, Symbol.noSymbol)
-      val ties = newMethod(module, s"${names.peerTies}${peer.name}", info, overridingFlags, Symbol.noSymbol)
+      val signature = newVal(module, s"${names.peerSignature}${peer.name}", types.peerSignature, Flags.Synthetic | Flags.Invisible | Flags.Lazy | overridingFlags, Symbol.noSymbol)
+      val ties = newMethod(module, s"${names.peerTies}${peer.name}", info, Flags.Synthetic | Flags.Invisible | overridingFlags, Symbol.noSymbol)
       SymbolMutator.getOrErrorAndAbort.enter(module, signature)
       SymbolMutator.getOrErrorAndAbort.enter(module, ties)
       (signature, ties)
@@ -957,7 +957,7 @@ trait RemoteAccessorSynthesis:
         case _ => None
 
       if typeSignatures.nonEmpty || locallyScoped || signature != abstractSignature then
-        val symbol = newVal(module, generateName(), symbols.marshallable.typeRef.appliedTo(types.typeList), flags | Flags.Lazy | Flags.Protected, Symbol.noSymbol)
+        val symbol = newVal(module, generateName(), symbols.marshallable.typeRef.appliedTo(types.typeList), Flags.Synthetic | Flags.Invisible | Flags.Lazy | Flags.Protected | flags, Symbol.noSymbol)
         trySetThreadUnsafe(symbol)
         injectFieldSymbol(symbol)
 
@@ -1392,7 +1392,7 @@ trait RemoteAccessorSynthesis:
                     argumentMarshallable.types.result,
                     resultMarshallable.types.base,
                     resultMarshallable.types.proxy))
-                val symbol = newVal(module, name, info, Flags.Final | Flags.Protected, Symbol.noSymbol)
+                val symbol = newVal(module, name, info, Flags.Synthetic | Flags.Invisible | Flags.Final | Flags.Protected, Symbol.noSymbol)
                 injectFieldSymbol(symbol)
 
                 inline def reference(symbol: Symbol) =
@@ -1487,14 +1487,22 @@ trait RemoteAccessorSynthesis:
     val overridden = mutable.ListBuffer.empty[(Symbol, Option[ValDef])]
     val placed = mutable.ListBuffer.empty[(Symbol | Int, (Symbol, Option[ValDef]))]
 
-    val declaredMethods =
+    extension (accessibleObject: AccessibleObject)
+      def parameterCount = accessibleObject match
+        case method: Method => method.getParameterCount
+        case _ => 0
+      def resultClass = accessibleObject match
+        case method: Method => method.getReturnType
+        case field: Field => field.getType
+
+    val (declaredMethods, declaredFields) =
       try
-        moduleClass.getDeclaredMethods
+        (moduleClass.getDeclaredMethods, moduleClass.getDeclaredFields)
       catch case NonFatal(_) =>
         errorAndCancel(
           s"Failed to access list of methods declared in ${prettyType(fullName(module))}.",
           Position.ofMacroExpansion.firstCodeLine)
-        Array.empty[Method]
+        (Array.empty[Method], Array.empty[Field])
 
     val inheritedValues =
       inheritedPlacedAccessors.iterator flatMap:
@@ -1514,12 +1522,12 @@ trait RemoteAccessorSynthesis:
 
     val values = (inheritedValues ++ declaredValues).toMap
 
-    declaredMethods foreach: method =>
-      if (method.getName startsWith names.marshalling) &&
-         !module.declaredField(method.getName).exists &&
-         method.getParameterCount == 0 &&
-         method.getReturnType == classes.marshallable then
-        val marshallable = method.getAnnotation(classes.marshallableInfo)
+    declaredMethods.iterator ++ declaredFields.iterator foreach: member =>
+      if (member.getName startsWith names.marshalling) &&
+         !module.declaredField(member.getName).exists &&
+         member.parameterCount == 0 &&
+         member.resultClass == classes.marshallable then
+        val marshallable = member.getAnnotation(classes.marshallableInfo)
         if marshallable != null then
           val types =
             TypeToken.deserializeType(marshallable.base, module) flatMap: base =>
@@ -1536,11 +1544,11 @@ trait RemoteAccessorSynthesis:
               report.warning(message, pos)
 
           types foreach: (base, result, proxy) =>
-            val overriding = module.typeRef.baseClasses.tail exists { _.declaredField(method.getName).exists }
+            val overriding = module.typeRef.baseClasses.tail exists { _.declaredField(member.getName).exists }
             val annotation = marshallableInfo(marshallable.signature, marshallable.base, marshallable.result, marshallable.proxy)
             val info = symbols.marshallable.typeRef.appliedTo(List(base, result, proxy))
             val flags = if overriding then Flags.Override else Flags.EmptyFlags
-            val symbol = newVal(module, method.getName, info, Flags.Lazy | Flags.Protected, Symbol.noSymbol)
+            val symbol = newVal(module, member.getName, info, Flags.Synthetic | Flags.Invisible | Flags.Lazy | Flags.Protected, Symbol.noSymbol)
             SymbolMutator.getOrErrorAndAbort.updateAnnotationWithTree(symbol, annotation)
             trySetThreadUnsafe(symbol)
             injectFieldSymbol(symbol)
@@ -1549,18 +1557,18 @@ trait RemoteAccessorSynthesis:
             else
               marshalling.addNewTypeEntry(base, symbol -> None)
 
-    declaredMethods foreach: method =>
-      if (method.getName startsWith names.placed) &&
-         !module.declaredField(method.getName).exists &&
-         method.getParameterCount == 0 &&
-         method.getReturnType == classes.placedValue then
-        val placedValue = method.getAnnotation(classes.placedValueInfo)
+    declaredMethods.iterator ++ declaredFields.iterator foreach: member =>
+      if (member.getName startsWith names.placed) &&
+         !module.declaredField(member.getName).exists &&
+         member.parameterCount == 0 &&
+         member.resultClass == classes.placedValue then
+        val placedValue = member.getAnnotation(classes.placedValueInfo)
         if placedValue != null && !placedBlockSignature.matches(placedValue.signature) then
           val value = values.get(placedValue.signature)
 
           def resolveMarshallable(identifier: String) =
             val name = marshallingName(identifier)
-            predefinedMarshallables find { _.symbol.name == name } orElse Marshallable(module.fieldMember(name), module)
+            predefinedMarshallables find { _.symbol.name == name } orElse Marshallable(module.potentiallyInvisibleFieldMember(name), module)
 
           val valueMarshallables =
             value flatMap: value =>
@@ -1581,7 +1589,7 @@ trait RemoteAccessorSynthesis:
           valueMarshallables foreach: (value, arguments, result) =>
             val annotation = placedValueInfo(placedValue.signature, placedValue.arguments, placedValue.result)
             val info = symbols.placedValue.typeRef.appliedTo(List(arguments.types.base, arguments.types.result, result.types.base, result.types.proxy))
-            val symbol = newVal(module, method.getName, info, Flags.Final | Flags.Protected, Symbol.noSymbol)
+            val symbol = newVal(module, member.getName, info, Flags.Synthetic | Flags.Invisible | Flags.Final | Flags.Protected, Symbol.noSymbol)
             SymbolMutator.getOrErrorAndAbort.updateAnnotationWithTree(symbol, annotation)
             injectFieldSymbol(symbol)
             placed += value -> (symbol, None)
