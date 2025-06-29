@@ -446,19 +446,6 @@ trait Commons:
       findAncestor(predicate).isDefined
     def hasAncestor(ancestors: Symbol*): Boolean =
       symbol hasAncestor { ancestors contains _ }
-    def orElse(other: Symbol): Symbol =
-      if symbol.exists then symbol else other
-    def fold[T](ifEmpty: => T)(f: Symbol => T): T =
-      if symbol.exists then f(symbol) else ifEmpty
-    def potentiallyInvisibleFieldMember(name: String) =
-      val field = symbol.typeRef.baseClasses collectFirst Function.unlift: symbol =>
-        val field = symbol.declaredField(name)
-        Option.when(field.exists) { field }
-      field getOrElse Symbol.noSymbol
-    def potentiallyInvisibleMethodMember(name: String) =
-      val methods = symbol.typeRef.baseClasses flatMap { _.declaredMethod(name) }
-      val overridden = (methods.iterator flatMap { _.allOverriddenSymbols }).toSet
-      methods filterNot { overridden contains _ }
 
   def newMethod(parent: Symbol, name: String, tpe: TypeRepr, flags: Flags, privateWithin: Symbol) =
     val symbol = Symbol.newMethod(parent, name, tpe, Flags.EmptyFlags, privateWithin)

@@ -284,7 +284,8 @@ trait RemoteAccessorSynthesis:
     else "class"
 
   private def accessorSignaturePrefix(module: Symbol) =
-    val signature = TypeToken.typeSignature(module.typeRef)
+    val tpe = if module.isModuleDef then module.termRef else module.typeRef
+    val signature = TypeToken.typeSignature(tpe)
     if signature.takeRight(2) == TypeToken.`type` then signature.init else signature :+ TypeToken.`#`
 
   private def accessorSignature(name: List[TypeToken], params: List[List[TypeRepr]], result: TypeRepr) =
@@ -585,7 +586,7 @@ trait RemoteAccessorSynthesis:
       // Once the dependency is available, the compilation unit is retried.
       val accessors = originalTree match
         case Some(tree: ClassDef) => synthesizeAccessorsFromTree(module, tree)
-        case _ => synthesizeAccessorsFromClass(module, Class.forName(classFileName(module)))
+        case _ => synthesizeAccessorsFromClass(module, getClass.getClassLoader.loadClass(classFileName(module)))
 
       if module.isModuleDef then
         synthesizedAccessorsCache.update(module.companionModule, accessors, tier)
@@ -1477,10 +1478,12 @@ trait RemoteAccessorSynthesis:
   end synthesizeAccessorsFromTree
 
   private def synthesizeAccessorsFromClass(module: Symbol, moduleClass: Class[?]): Accessors =
+    val mangledName = mangledSymbolName(module)
+    val placedPrefix = s"${names.placed}$mangledName$$"
+    val marshallingPrefix = s"${names.marshalling}$mangledName$$"
     val signaturePrefix = accessorSignaturePrefix(module)
 
-    val inheritedPlacedAccessors =
-      synthesizeAllPlacedAccessors(module, includeFirst = false)
+    synthesizeAllPlacedAccessors(module, includeFirst = false)
 
     SymbolMutator.getOrErrorAndAbort.invalidateMemberCaches(module)
 
@@ -1505,12 +1508,7 @@ trait RemoteAccessorSynthesis:
           Position.ofMacroExpansion.firstCodeLine)
         (Array.empty[Method], Array.empty[Field])
 
-    val inheritedValues =
-      inheritedPlacedAccessors.iterator flatMap:
-        case (_: Int, _) => None
-        case (symbol: Symbol @unchecked, placed) => placedInfo(placed) map { (signature, _, _) => signature -> symbol }
-
-    val declaredValues =
+    val values =
       module.fieldMembers.iterator ++ module.methodMembers.iterator flatMap: member =>
         if !(member.flags is Flags.Synthetic) && !(member.flags is Flags.Artifact) then
           val tpe = ThisType(module).memberType(member)
@@ -1520,11 +1518,10 @@ trait RemoteAccessorSynthesis:
               accessorSignature(signaturePrefix :+ TypeToken(targetName(member)), argumentTypes(info), placementInfo.valueType) -> member
         else
           None
-
-    val values = (inheritedValues ++ declaredValues).toMap
+    .toMap
 
     declaredMethods.iterator ++ declaredFields.iterator foreach: member =>
-      if (member.getName startsWith names.marshalling) &&
+      if (member.getName startsWith marshallingPrefix) &&
          !module.declaredField(member.getName).exists &&
          member.parameterCount == 0 &&
          member.resultClass == classes.marshallable then
@@ -1559,7 +1556,7 @@ trait RemoteAccessorSynthesis:
               marshalling.addNewTypeEntry(base, symbol -> None)
 
     declaredMethods.iterator ++ declaredFields.iterator foreach: member =>
-      if (member.getName startsWith names.placed) &&
+      if (member.getName startsWith placedPrefix) &&
          !module.declaredField(member.getName).exists &&
          member.parameterCount == 0 &&
          member.resultClass == classes.placedValue then

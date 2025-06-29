@@ -65,7 +65,6 @@ object reflectionExtensions:
     @experimental
     def getter =
       import quotes.reflect.*
-
       symbol.info match
         case MethodType(_, List(paramType), resultType)
             if resultType.typeSymbol == defn.UnitClass &&
@@ -75,12 +74,10 @@ object reflectionExtensions:
           if getter.info =:= paramType then getter else Symbol.noSymbol
         case _ =>
           Symbol.noSymbol
-    end getter
 
     @experimental
     def setter =
       import quotes.reflect.*
-
       if symbol.isField && (symbol.flags is Flags.Mutable) then
         val setter = symbol.owner.declaredMethod(s"${symbol.name}_=") find {
           _.info match
@@ -90,7 +87,28 @@ object reflectionExtensions:
         setter getOrElse Symbol.noSymbol
       else
         Symbol.noSymbol
-    end setter
+
+    def potentiallyInvisibleFieldMember(name: String) =
+      import quotes.reflect.*
+      symbol.declaredField(name) orElse {
+        val field = symbol.typeRef.baseClasses.tail collectFirst Function.unlift { symbol =>
+          val field = symbol.declaredField(name)
+          Option.when(field.exists && !(field.flags is Flags.Private)) { field }
+        }
+        field getOrElse Symbol.noSymbol
+      }
+
+    def potentiallyInvisibleMethodMember(name: String) =
+      import quotes.reflect.*
+      val methods = symbol.declaredMethod(name) ++ (symbol.typeRef.baseClasses.tail flatMap { _.declaredMethod(name) filterNot { _.flags is Flags.Private } })
+      val overridden = (methods.iterator flatMap { _.allOverriddenSymbols }).toSet
+      methods filterNot { overridden contains _ }
+
+    def fold[T](ifEmpty: => T)(f: quotes.reflect.Symbol => T): T =
+      if symbol.exists then f(symbol) else ifEmpty
+
+    def orElse(other: quotes.reflect.Symbol): quotes.reflect.Symbol =
+      if symbol.exists then symbol else other
   end extension
 
   extension (using Quotes)(flags: quotes.reflect.Flags)
