@@ -9,47 +9,40 @@ import scala.annotation.compileTimeOnly
 import scala.quoted.*
 
 object CompileTimeUtils:
-  inline def replace(inline value: String, inline from: String, inline to: String): String =
-    ${ replaceImpl('value, 'from, 'to) }
-
-  def replaceImpl(value: Expr[String], from: Expr[String], to: Expr[String])(using Quotes): Expr[String] =
-    Expr(value.valueOrAbort.replace(from.valueOrAbort, to.valueOrAbort))
-
   inline def assertType[T](inline value: Any): Unit =
-    ${ assertTypeImpl[T]('value) }
+    ${ assertTypeVariantsImpl[T, Nothing]('value, exact = false) }
 
-  def assertTypeImpl[T: Type](value: Expr[Any])(using Quotes): Expr[Unit] =
-    import quotes.reflect.*
-
-    object normalizer extends TypeMap(quotes):
-      override def transform(tpe: TypeRepr) = tpe.dealias match
-        case tpe: TypeRef => TypeIdent(tpe.typeSymbol).tpe
-        case tpe => super.transform(tpe)
-
-    val tpe = value.asTerm.tpe.widenTermRefByName
-
-    if normalizer.transform(TypeRepr.of[T]).show == normalizer.transform(tpe).show then
-      '{ () }
-    else
-      failTest(s"${value.show} has type `${tpe.show}`; type `${TypeRepr.of[T].show}` expected")
+  inline def assertType[T, U]: Unit =
+    ${ assertTypeVariantsImpl[T, U](null, exact = false) }
 
   inline def assertExactType[T](inline value: Any): Unit =
-    ${ assertExactTypeImpl[T]('value) }
+    ${ assertTypeVariantsImpl[T, Nothing]('value, exact = true) }
 
-  def assertExactTypeImpl[T: Type](value: Expr[Any])(using Quotes): Expr[Unit] =
+  inline def assertExactType[T, U]: Unit =
+    ${ assertTypeVariantsImpl[T, U](null, exact = true) }
+
+  def assertTypeVariantsImpl[T: Type, U: Type](value: Expr[Any] | Null, exact: Boolean)(using Quotes): Expr[Unit] =
     import quotes.reflect.*
 
     object normalizer extends TypeMap(quotes):
-      override def transform(tpe: TypeRepr) = tpe match
-        case tpe: TypeRef => TypeIdent(tpe.typeSymbol).tpe
-        case _ => super.transform(tpe)
+      override def transform(tpe: TypeRepr) =
+        val maybeExactType = if exact then tpe else tpe.dealias
+        maybeExactType match
+          case tpe: TypeRef => TypeIdent(tpe.typeSymbol).tpe
+          case tpe => super.transform(tpe)
 
-    val tpe = value.asTerm.tpe.widenTermRefByName
+    val tpe = if value != null then value.asTerm.tpe else TypeRepr.of[U]
 
-    if normalizer.transform(TypeRepr.of[T]).show == normalizer.transform(tpe).show then
+    if normalizer.transform(TypeRepr.of[T]).show == normalizer.transform(tpe.widenTermRefByName).show then
       '{ () }
     else
-      failTest(s"${value.show} has type of form `${tpe.show}`; exact type `${TypeRepr.of[T].show}` expected")
+      val (actualType, maybeExactType) =
+        if exact then
+          (if value != null then s"${value.asTerm.safeShow} has type of form" else "Actual type has form", "exact type")
+        else
+          (if value != null then s"${value.asTerm.safeShow} has type" else "Actual type is", "type")
+      failTest(s"$actualType `${tpe.widenTermRefByName.safeShow}`; $maybeExactType `${TypeRepr.of[T].safeShow}` expected")
+  end assertTypeVariantsImpl
 
   inline def assertNoFailedAssertion(inline expr: Any): Unit =
     ${ assertNoFailedAssertionImpl('expr) }
@@ -73,25 +66,7 @@ object CompileTimeUtils:
     (failedAssertionsFinder.foldTree(List.empty, expr.asTerm.underlyingArgument)(Symbol.spliceOwner).lastOption
       map failTest
       getOrElse '{ () })
-
-  inline def abstractValuesInInstantiation(inline expr: Any): List[String] =
-    ${ abstractValuesInInstantiationImpl('expr) }
-
-  def abstractValuesInInstantiationImpl(expr: Expr[Any])(using Quotes): Expr[List[String]] =
-    import quotes.reflect.*
-
-    object instantiationOfAbstractValuesFinder extends TreeAccumulator[List[String]]:
-      def foldTree(values: List[String], tree: Tree)(owner: Symbol) = tree match
-        case New(tpt) =>
-          val members = tpt.symbol.fieldMembers ++ tpt.symbol.methodMembers collect {
-            case symbol if symbol.isTerm && symbol.isAbstract =>
-              symbol.name
-          }
-          foldOverTree(members ++ values, tree)(owner)
-        case _ =>
-          foldOverTree(values, tree)(owner)
-
-    Expr(instantiationOfAbstractValuesFinder.foldOverTree(List.empty, expr.asTerm.underlyingArgument)(Symbol.spliceOwner))
+  end assertNoFailedAssertionImpl
 
   inline def containsCompileTimeOnly(inline expr: Any): Boolean =
     ${ containsCompileTimeOnlyImpl('expr) }
@@ -108,6 +83,7 @@ object CompileTimeUtils:
         foldOverTree(false, tree)(owner)
 
     Expr(compileTimeOnlyAnnotationFinder.foldTree(false, expr.asTerm)(Symbol.spliceOwner))
+  end containsCompileTimeOnlyImpl
 
   inline def containsValueOfType[T, U]: Boolean =
     ${ containsValueOfTypeImpl[T, U] }
@@ -115,10 +91,11 @@ object CompileTimeUtils:
   def containsValueOfTypeImpl[T: Type, U: Type](using Quotes): Expr[Boolean] =
     import quotes.reflect.*
 
-    val T = TypeRepr.of[T].typeSymbol
-    val U = TypeRepr.of[U]
+    val symbol = TypeRepr.of[T].typeSymbol
+    val tpe = TypeRepr.of[U]
 
-    Expr(T.declaredFields ++ T.declaredMethods exists { Ref(_).tpe.finalResultType <:< U })
+    Expr(symbol.declaredFields ++ symbol.declaredMethods exists { Ref(_).tpe.finalResultType <:< tpe })
+  end containsValueOfTypeImpl
 
   private def failTest(message: String)(using Quotes) =
     import quotes.reflect.*
