@@ -96,7 +96,7 @@ trait SymbolTrees:
           try
             val tree = symbol.tree
             val pos = tree.pos
-            Option.when(pos.start >= 0 && pos.end > pos.start && !(pos.toString endsWith ">")) { tree }
+            Option.when(pos.toString != "?"  && !(pos.toString endsWith ">") && pos.start >= 0 && pos.end > pos.start) { tree }
           catch
             case NonFatal(_) => None
     end apply

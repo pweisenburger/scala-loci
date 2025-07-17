@@ -5,7 +5,7 @@ import embedding.*
 import messaging.*
 import scala.annotation.{compileTimeOnly, experimental}
 
-package object language {
+package object language:
   inline def connect[P](
       inline setup: Connector[ConnectionsBase.Protocol]): Connections =
     ${ impl.Connections.connect[P]('setup) }
@@ -42,4 +42,3 @@ package object language {
 
   export Select.Call.apply as remote
   def remote[P]: Narrow & Call[P, from] & Gateway[P] = erased
-}
