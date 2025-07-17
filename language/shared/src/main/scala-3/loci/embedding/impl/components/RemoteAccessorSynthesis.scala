@@ -455,24 +455,8 @@ trait RemoteAccessorSynthesis:
   end Resolution
 
   private def signatures(module: Symbol) =
-    extension (tpe: TypeRepr)
-      def asTerm: Option[Term] = tpe match
-        case AnnotatedType(underlying, _) => underlying.asTerm
-        case Refinement(parent, _, _) => parent.asTerm
-        case ThisType(tref) => Some(This(tref.typeSymbol))
-        case TermRef(NoPrefix(), name) => Some(Ref(tpe.termSymbol))
-        case TermRef(qualifier, name) => qualifier.asTerm map { Select.unique(_, name) }
-        case _ => None
-
-      def pathTerm: Option[Term] = tpe match
-        case tpe: AnnotatedType => tpe.underlying.pathTerm
-        case tpe: Refinement => tpe.parent.pathTerm
-        case tpe: NamedType => tpe.qualifier.asTerm
-        case _ => None
-    end extension
-
     def signature(peerType: TypeRepr) =
-      peerType.pathTerm match
+      peerType.maybePathTermFrom(module) match
         case Some(term) if isMultitierModule(term.symbol) =>
           val(symbol, _) = synthesizePeerSignature(peerType.typeSymbol.owner, peerType.typeSymbol)
           Some(term.select(symbol))
@@ -483,7 +467,7 @@ trait RemoteAccessorSynthesis:
               pos
             case _ =>
               splicePos
-          errorAndCancel(s"Invalid prefix for peer type: ${prettyType(peerType.prettyShow)}", pos)
+          errorAndCancel(s"No path to multitier module for peer type: ${prettyType(peerType.prettyShow)}", pos)
           None
 
     val moduleIdentifier =

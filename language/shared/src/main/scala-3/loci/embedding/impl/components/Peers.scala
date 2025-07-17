@@ -11,16 +11,19 @@ import scala.collection.mutable
 object Peers:
   private val cache = mutable.Map.empty[Any, Any]
 
+  enum Multiplicity:
+    case Single, Optional, Multiple
+end Peers
+
 @experimental
 trait Peers:
   this: Component & Commons =>
   import quotes.reflect.*
 
+  export Peers.Multiplicity
+
   private val cache = Peers.cache match
     case cache: mutable.Map[(TypeRepr, TypeRef), PeerInfo] @unchecked => cache
-
-  enum Multiplicity:
-    case Single, Optional, Multiple
 
   case class PeerInfo(peerType: TypeRef, parents: List[TypeRef], ties: List[(TypeRef, Multiplicity)])
 

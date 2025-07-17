@@ -313,6 +313,40 @@ object reflectionExtensions:
     def stripLazyRef: quotes.reflect.TypeRepr =
       LazyRefStripping.strip(tpe)
 
+    def maybeTerm: Option[quotes.reflect.Term] =
+      import quotes.reflect.*
+      tpe match
+        case AnnotatedType(underlying, _) => underlying.maybeTerm
+        case Refinement(parent, _, _) => parent.maybeTerm
+        case ThisType(tref) => Some(This(tref.typeSymbol))
+        case TermRef(NoPrefix(), name) => Some(Ref(tpe.termSymbol))
+        case TermRef(qualifier, name) => qualifier.maybeTerm map { Select.unique(_, name) }
+        case _ => None
+
+    def maybePathTerm: Option[quotes.reflect.Term] =
+      import quotes.reflect.*
+      tpe match
+        case tpe: AnnotatedType => tpe.underlying.maybePathTerm
+        case tpe: Refinement => tpe.parent.maybePathTerm
+        case tpe: NamedType => tpe.qualifier.maybeTerm
+        case _ => None
+
+    def maybePathTermFrom(symbol: quotes.reflect.Symbol): Option[quotes.reflect.Term] =
+      import quotes.reflect.*
+      tpe match
+        case tpe: AnnotatedType =>
+          tpe.underlying.maybePathTermFrom(symbol)
+        case tpe: Refinement =>
+          tpe.parent.maybePathTermFrom(symbol)
+        case tpe: NamedType =>
+          tpe.qualifier.maybeTerm orElse {
+            if symbol.moduleClass.exists then Some(This(symbol.moduleClass))
+            else if symbol.isClassDef then Some(This(symbol))
+            else None
+          }
+        case _ =>
+          None
+
     @experimental
     def substituteParamRefsByTermRefs(binder: quotes.reflect.Symbol) =
       import quotes.reflect.*

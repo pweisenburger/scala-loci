@@ -1,20 +1,30 @@
 package loci
 
+import communicator.*
 import embedding.*
+import messaging.*
 import scala.annotation.{compileTimeOnly, experimental}
 
 package object language {
-//  def connect[P](setup: Connector[ConnectionsBase.Protocol]): Connections =
-//    macro impl.Connections.setup
-//  def connect[P](factory: ConnectionSetupFactory[ConnectionsBase.Protocol])(
-//      /* url: String, props: ConnectionSetupFactory.Properties */ args: Any*): Connections =
-//    macro impl.Connections.factory
-//
-//  def listen[P](setup: Listener[ConnectionsBase.Protocol]): Connections =
-//    macro impl.Connections.setup
-//  def listen[P](factory: ConnectionSetupFactory[ConnectionsBase.Protocol])(
-//      /* url: String, props: ConnectionSetupFactory.Properties */ args: Any*): Connections =
-//    macro impl.Connections.factory
+  inline def connect[P](
+      inline setup: Connector[ConnectionsBase.Protocol]): Connections =
+    ${ impl.Connections.connect[P]('setup) }
+
+  inline def connect[P](
+      inline factory: ConnectionSetupFactory[ConnectionsBase.Protocol])(
+      inline url: String,
+      inline props: ConnectionSetupFactory.Properties = Map.empty): Connections =
+    ${ impl.Connections.connect[P]('factory, 'url, 'props) }
+
+  inline def listen[P](
+      inline setup: Listener[ConnectionsBase.Protocol]): Connections =
+    ${ impl.Connections.listen[P]('setup) }
+
+  inline def listen[P](
+      inline factory: ConnectionSetupFactory[ConnectionsBase.Protocol])(
+      inline url: String,
+      inline props: ConnectionSetupFactory.Properties = Map.empty): Connections =
+    ${ impl.Connections.listen[P]('factory, 'url, 'props) }
 
 //  object placed extends On.Placed
 //
