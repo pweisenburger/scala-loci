@@ -678,22 +678,26 @@ object reflectionExtensions:
         super.transformSubTrees(trees)(owner)
     end underlying
 
+    private inline def skipErrors[Tr <: Tree](tree: Tr)(inline op: Tr => Tr) = tree match
+      case Inferred() => tree
+      case _ => op(tree)
+
     def transformTree(tree: Tree)(owner: Symbol): Tree =
-      underlying.superTransformTree(tree)(owner)
+      skipErrors(tree)(underlying.superTransformTree(_)(owner))
     def transformStatement(tree: Statement)(owner: Symbol): Statement =
-      underlying.superTransformStatement(tree)(owner)
+      skipErrors(tree)(underlying.superTransformStatement(_)(owner))
     def transformTerm(tree: Term)(owner: Symbol): Term =
-      underlying.superTransformTerm(tree)(owner)
+      skipErrors(tree)(underlying.superTransformTerm(_)(owner))
     def transformTypeTree(tree: TypeTree)(owner: Symbol): TypeTree = tree match
       case tree: TypeBoundsTree =>
         // workaround for issue: https://github.com/lampepfl/dotty/issues/17003
-        TypeBoundsTree.copy(tree)(transformTypeTree(tree.low)(owner), transformTypeTree(tree.hi)(owner)).asInstanceOf[TypeTree]
+        TypeBoundsTree.copy(tree)(skipErrors(tree.low)(transformTypeTree(_)(owner)), skipErrors(tree.hi)(transformTypeTree(_)(owner))).asInstanceOf[TypeTree]
       case _ =>
-        underlying.superTransformTypeTree(tree)(owner)
+        skipErrors(tree)(underlying.superTransformTypeTree(_)(owner))
     def transformCaseDef(tree: CaseDef)(owner: Symbol): CaseDef =
-      underlying.superTransformCaseDef(tree)(owner)
+      skipErrors(tree)(underlying.superTransformCaseDef(_)(owner))
     def transformTypeCaseDef(tree: TypeCaseDef)(owner: Symbol): TypeCaseDef =
-      underlying.superTransformTypeCaseDef(tree)(owner)
+      skipErrors(tree)(underlying.superTransformTypeCaseDef(_)(owner))
     def transformStats(trees: List[Statement])(owner: Symbol): List[Statement] =
       underlying.superTransformStats(trees)(owner)
     def transformTrees(trees: List[Tree])(owner: Symbol): List[Tree] =
